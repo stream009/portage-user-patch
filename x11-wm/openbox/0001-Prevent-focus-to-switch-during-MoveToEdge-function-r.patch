@@ -1,0 +1,37 @@
+From 6b7232489cca93cec807bd23de9ddc722d8809d6 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Thu, 3 Jul 2014 16:24:11 +0900
+Subject: [PATCH 1/2] Prevent focus to switch during MoveToEdge function
+ running.
+
+---
+ openbox/actions/movetoedge.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/openbox/actions/movetoedge.c b/openbox/actions/movetoedge.c
+index ef5b692..8d3c6f2 100644
+--- a/openbox/actions/movetoedge.c
++++ b/openbox/actions/movetoedge.c
+@@ -3,6 +3,7 @@
+ #include "openbox/client.h"
+ #include "openbox/frame.h"
+ #include "openbox/geom.h"
++#include "openbox/event.h"
+ #include <glib.h>
+ 
+ typedef struct {
+@@ -71,9 +72,9 @@ static gboolean run_func(ObActionsData *data, gpointer options)
+ 
+         client_find_move_directional(data->client, o->dir, &x, &y);
+         if (x != data->client->area.x || y != data->client->area.y) {
+-            actions_client_move(data, TRUE);
++            const gulong ignore_start = event_start_ignore_all_enters();
+             client_move(data->client, x, y);
+-            actions_client_move(data, FALSE);
++            event_end_ignore_all_enters(ignore_start);
+         }
+     }
+ 
+-- 
+2.0.0
+

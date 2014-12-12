@@ -1,0 +1,33 @@
+From 3cc523d3654ded54b189f6d62b83a1bf3e67bbd2 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Thu, 9 Oct 2014 16:11:37 +0900
+Subject: [PATCH] Show current place name to window caption if possible.
+
+---
+ dolphin/src/dolphinmainwindow.cpp | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/dolphin/src/dolphinmainwindow.cpp b/dolphin/src/dolphinmainwindow.cpp
+index 8f841df..cefd292 100644
+--- a/dolphin/src/dolphinmainwindow.cpp
++++ b/dolphin/src/dolphinmainwindow.cpp
+@@ -1835,8 +1835,14 @@ void DolphinMainWindow::setUrlAsCaption(const KUrl& url)
+         }
+     }
+ 
+-    const QString fileName = url.fileName().isEmpty() ? "/" : url.fileName();
+-    caption.append(fileName);
++    const QString &placeName = getPlaceName(url);
++    if (!placeName.isEmpty()) {
++        caption.append(placeName);
++    }
++    else {
++        const QString fileName = url.fileName().isEmpty() ? "/" : url.fileName();
++        caption.append(fileName);
++    }
+ 
+     setCaption(caption);
+ }
+-- 
+2.1.2
+

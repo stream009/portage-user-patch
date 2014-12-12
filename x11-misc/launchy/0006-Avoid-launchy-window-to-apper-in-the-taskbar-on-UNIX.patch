@@ -1,0 +1,26 @@
+From ed637417bb6b79c4c5caf24cd43f84704bb03a9c Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Fri, 30 May 2014 20:37:14 +0900
+Subject: [PATCH 1/3] Avoid launchy window to apper in the taskbar on UNIX
+ platform.
+
+---
+ src/main.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index f9240fe..eb7be50 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -54,7 +54,7 @@ LaunchyWidget::LaunchyWidget(CommandFlags command) :
+ 	QWidget(NULL, Qt::FramelessWindowHint | Qt::Tool),
+ #endif
+ #ifdef Q_WS_X11
+-        QWidget(NULL, Qt::FramelessWindowHint | Qt::Tool),
++        QWidget(NULL, Qt::FramelessWindowHint | Qt::SplashScreen),
+ #endif
+ #ifdef Q_WS_MAC
+         QWidget(NULL, Qt::FramelessWindowHint),
+-- 
+2.0.0
+

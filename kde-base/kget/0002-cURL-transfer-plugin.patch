@@ -1,0 +1,1807 @@
+From bed751f043465f7f0b23b93dd53ef0c1b1d3bd76 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Mon, 27 Oct 2014 22:32:14 +0900
+Subject: [PATCH] Squashed commit of the following:
+
+---
+ transfer-plugins/CMakeLists.txt                    |   1 +
+ transfer-plugins/curl/CMakeLists.txt               |  49 ++++
+ .../curl/content_disposition/cmake/FindRagel.cmake |  48 ++++
+ .../content_disposition/content_disposition.hpp    |  32 +++
+ .../content_disposition/content_disposition.rl     | 222 +++++++++++++++
+ .../curl/content_disposition/rfc2616.rl            |  35 +++
+ .../curl/content_disposition/rfc5646.rl            |  65 +++++
+ .../curl/content_disposition/rfc5987.rl            |  27 ++
+ .../curl/content_disposition/rfc6266.rl            |  40 +++
+ transfer-plugins/curl/curl.cpp                     | 114 ++++++++
+ transfer-plugins/curl/curl.h                       |  70 +++++
+ transfer-plugins/curl/curlthread.cpp               | 314 +++++++++++++++++++++
+ transfer-plugins/curl/curlthread.h                 |  96 +++++++
+ transfer-plugins/curl/curlthread_p.h               | 110 ++++++++
+ transfer-plugins/curl/curltransfer.cpp             | 103 +++++++
+ transfer-plugins/curl/curltransfer.h               |  37 +++
+ transfer-plugins/curl/curltransferfactory.cpp      |  33 +++
+ transfer-plugins/curl/curltransferfactory.h        |  24 ++
+ transfer-plugins/curl/kcm_widget.ui                |  71 +++++
+ transfer-plugins/curl/kcmwidget.cpp                |  29 ++
+ transfer-plugins/curl/kcmwidget.h                  |  22 ++
+ transfer-plugins/curl/kget_curlfactory.desktop     |  23 ++
+ transfer-plugins/curl/kget_curlfactory.kcfg        |  15 +
+ .../curl/kget_curlfactory_config.desktop           |   8 +
+ transfer-plugins/curl/settings.kcfgc               |   5 +
+ 25 files changed, 1593 insertions(+)
+ create mode 100644 transfer-plugins/curl/CMakeLists.txt
+ create mode 100644 transfer-plugins/curl/content_disposition/cmake/FindRagel.cmake
+ create mode 100644 transfer-plugins/curl/content_disposition/content_disposition.hpp
+ create mode 100644 transfer-plugins/curl/content_disposition/content_disposition.rl
+ create mode 100644 transfer-plugins/curl/content_disposition/rfc2616.rl
+ create mode 100644 transfer-plugins/curl/content_disposition/rfc5646.rl
+ create mode 100644 transfer-plugins/curl/content_disposition/rfc5987.rl
+ create mode 100644 transfer-plugins/curl/content_disposition/rfc6266.rl
+ create mode 100644 transfer-plugins/curl/curl.cpp
+ create mode 100644 transfer-plugins/curl/curl.h
+ create mode 100644 transfer-plugins/curl/curlthread.cpp
+ create mode 100644 transfer-plugins/curl/curlthread.h
+ create mode 100644 transfer-plugins/curl/curlthread_p.h
+ create mode 100644 transfer-plugins/curl/curltransfer.cpp
+ create mode 100644 transfer-plugins/curl/curltransfer.h
+ create mode 100644 transfer-plugins/curl/curltransferfactory.cpp
+ create mode 100644 transfer-plugins/curl/curltransferfactory.h
+ create mode 100644 transfer-plugins/curl/kcm_widget.ui
+ create mode 100644 transfer-plugins/curl/kcmwidget.cpp
+ create mode 100644 transfer-plugins/curl/kcmwidget.h
+ create mode 100644 transfer-plugins/curl/kget_curlfactory.desktop
+ create mode 100644 transfer-plugins/curl/kget_curlfactory.kcfg
+ create mode 100644 transfer-plugins/curl/kget_curlfactory_config.desktop
+ create mode 100644 transfer-plugins/curl/settings.kcfgc
+
+diff --git a/transfer-plugins/CMakeLists.txt b/transfer-plugins/CMakeLists.txt
+index 3473716..5ad95b5 100644
+--- a/transfer-plugins/CMakeLists.txt
++++ b/transfer-plugins/CMakeLists.txt
+@@ -10,5 +10,6 @@ if (LIBMMS_FOUND)
+   add_subdirectory(mmsthreads)
+ endif (LIBMMS_FOUND)
+ add_subdirectory(checksumsearch)
++add_subdirectory(curl)
+ 
+ SET(SUPPORTED_KGET_MIMETYPES "${SUPPORTED_KGET_MIMETYPES}" PARENT_SCOPE)
+diff --git a/transfer-plugins/curl/CMakeLists.txt b/transfer-plugins/curl/CMakeLists.txt
+new file mode 100644
+index 0000000..68aac81
+--- /dev/null
++++ b/transfer-plugins/curl/CMakeLists.txt
+@@ -0,0 +1,49 @@
++find_package(CURL REQUIRED)
++find_package(Boost REQUIRED COMPONENTS regex system)
++
++include_directories(
++   ../../
++   ${Boost_INCLUDE_DIRS}
++   ./content_disposition
++)
++
++set(CMAKE_CXX_FLAGS "${CMAKE_FLAGS} ${KDE4_ENABLE_EXCEPTIONS}")
++
++set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/content_disposition/cmake)
++
++find_package(Ragel REQUIRED)
++
++ragel_parser(content_disposition/content_disposition.rl)
++
++set(kget_curlfactory_PART_SRCS
++  curl.cpp
++  curlthread.cpp
++  curltransfer.cpp
++  curltransferfactory.cpp
++  content_disposition/content_disposition.cpp
++)
++
++kde4_add_kcfg_files(kget_curlfactory_PART_SRCS settings.kcfgc)
++kde4_add_plugin(kget_curlfactory ${kget_curlfactory_PART_SRCS})
++
++target_link_libraries(kget_curlfactory 
++  ${KDE4_KIO_LIBS} kgetcore ${CURL_LIBRARIES} ${Boost_LIBRARIES})
++
++install(TARGETS kget_curlfactory DESTINATION ${PLUGIN_INSTALL_DIR})
++install(FILES kget_curlfactory.desktop DESTINATION ${SERVICES_INSTALL_DIR})
++install(FILES kget_curlfactory.kcfg DESTINATION ${KCFG_INSTALL_DIR})
++
++###Build KCM-Module
++set(kcm_kget_curlfactory_PART_SRCS
++  kcmwidget.cpp 
++)
++
++kde4_add_ui_files(kcm_kget_curlfactory_PART_SRCS
++  kcm_widget.ui
++)
++kde4_add_kcfg_files(kcm_kget_curlfactory_PART_SRCS settings.kcfgc)
++kde4_add_plugin(kcm_kget_curlfactory ${kcm_kget_curlfactory_PART_SRCS})
++target_link_libraries(kcm_kget_curlfactory ${KDE4_KDEUI_LIBS} ${KDE4_KIO_LIBS})
++install(TARGETS kcm_kget_curlfactory DESTINATION ${PLUGIN_INSTALL_DIR})
++
++install(FILES kget_curlfactory_config.desktop DESTINATION ${SERVICES_INSTALL_DIR})
+diff --git a/transfer-plugins/curl/content_disposition/cmake/FindRagel.cmake b/transfer-plugins/curl/content_disposition/cmake/FindRagel.cmake
+new file mode 100644
+index 0000000..684695c
+--- /dev/null
++++ b/transfer-plugins/curl/content_disposition/cmake/FindRagel.cmake
+@@ -0,0 +1,48 @@
++
++IF(NOT RAGEL_EXECUTABLE)
++	MESSAGE(STATUS "Looking for ragel")
++	FIND_PROGRAM(RAGEL_EXECUTABLE ragel)
++	IF(RAGEL_EXECUTABLE)
++		EXECUTE_PROCESS(COMMAND "${RAGEL_EXECUTABLE}" -v OUTPUT_VARIABLE _version)
++		STRING(REGEX MATCH "[0-9.]+" RAGEL_VERSION ${_version})
++		SET(RAGEL_FOUND TRUE)
++	ENDIF(RAGEL_EXECUTABLE)
++ELSE(NOT RAGEL_EXECUTABLE)
++	EXECUTE_PROCESS(COMMAND "${RAGEL_EXECUTABLE}" -v OUTPUT_VARIABLE _version)
++	STRING(REGEX MATCH "[0-9.]+" RAGEL_VERSION ${_version})
++	SET(RAGEL_FOUND TRUE)
++ENDIF(NOT RAGEL_EXECUTABLE)
++
++IF(RAGEL_FOUND)
++	IF (NOT Ragel_FIND_QUIETLY)
++		MESSAGE(STATUS "Found ragel: ${RAGEL_EXECUTABLE} (${RAGEL_VERSION})")
++	ENDIF (NOT Ragel_FIND_QUIETLY)
++
++	IF(NOT RAGEL_FLAGS)
++		SET(RAGEL_FLAGS "-T1")
++	ENDIF(NOT RAGEL_FLAGS)
++
++	MACRO(RAGEL_PARSER SRCFILE)
++		GET_FILENAME_COMPONENT(SRCPATH "${SRCFILE}" PATH)
++		GET_FILENAME_COMPONENT(SRCBASE "${SRCFILE}" NAME_WE)
++		SET(OUTFILE "${CMAKE_CURRENT_BINARY_DIR}/${SRCPATH}/${SRCBASE}.cpp")
++		FILE(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${SRCPATH}")
++		SET(INFILE "${CMAKE_CURRENT_SOURCE_DIR}/${SRCFILE}")
++		SET(_flags ${ARGV1})
++		IF(NOT _flags)
++			SET(_flags ${RAGEL_FLAGS})
++		ENDIF(NOT _flags)
++		ADD_CUSTOM_COMMAND(OUTPUT ${OUTFILE}
++			COMMAND "${RAGEL_EXECUTABLE}"
++			ARGS -C ${_flags} -o "${OUTFILE}" "${INFILE}"
++			DEPENDS "${INFILE}"
++			COMMENT "Generating ${SRCBASE}.cpp from ${SRCFILE}"
++		)
++	ENDMACRO(RAGEL_PARSER)
++
++ELSE(RAGEL_FOUND)
++
++	IF(Ragel_FIND_REQUIRED)
++		MESSAGE(FATAL_ERROR "Could not find ragel")
++	ENDIF(Ragel_FIND_REQUIRED)
++ENDIF(RAGEL_FOUND)
+diff --git a/transfer-plugins/curl/content_disposition/content_disposition.hpp b/transfer-plugins/curl/content_disposition/content_disposition.hpp
+new file mode 100644
+index 0000000..e74987c
+--- /dev/null
++++ b/transfer-plugins/curl/content_disposition/content_disposition.hpp
+@@ -0,0 +1,32 @@
++#ifndef CONTENT_DISPOSITION_HPP
++#define CONTENT_DISPOSITION_HPP
++
++#include <iosfwd>
++#include <string>
++#include <vector>
++
++#include <boost/optional.hpp>
++#include <boost/container/flat_map.hpp>
++
++struct ContentDisposition
++{
++    typedef boost::container::flat_map<std::string, std::string> Parameters;
++    typedef Parameters::value_type Parameter;
++
++    struct ExtValue {
++        std::string charset;
++        std::string language;
++        std::string value;
++    };
++    typedef boost::container::flat_map<std::string, ExtValue> ExtParameters;
++    typedef ExtParameters::value_type ExtParameter;
++
++    std::string type;
++    Parameters params;
++    ExtParameters extParams;
++};
++
++boost::optional<ContentDisposition>
++parse(const char *buf, const size_t size);
++
++#endif // CONTENT_DISPOSITION_HPP
+diff --git a/transfer-plugins/curl/content_disposition/content_disposition.rl b/transfer-plugins/curl/content_disposition/content_disposition.rl
+new file mode 100644
+index 0000000..d6d19d8
+--- /dev/null
++++ b/transfer-plugins/curl/content_disposition/content_disposition.rl
+@@ -0,0 +1,222 @@
++#include "content_disposition.hpp"
++
++#include <cassert>
++#include <stack>
++//#include <iostream>
++
++#include <boost/any.hpp>
++#include <boost/algorithm/string/case_conv.hpp>
++
++%%{
++machine actions;
++
++action mark { mark = p; }
++
++action push_token {
++    std::string token(mark, p); 
++    //std::cout << "push_token: " << token << '\n';
++    stack.push(token); 
++}
++
++action push_quoted_string {
++    std::string token(mark+1, p-1);
++    //std::cout << "push_quoted_string: " << token << '\n';
++    stack.push(token); 
++}
++
++action push_parm {
++    assert(stack.size() >= 2);
++    //std::cout << "push_parm\n";
++
++    const std::string value = boost::any_cast<std::string>(stack.top());
++    stack.pop();
++
++    const std::string key = boost::any_cast<std::string>(stack.top());
++    stack.pop();
++
++    ContentDisposition::Parameter parm(key, value);
++    stack.push(parm);
++}
++
++action push_ext_value {
++    //std::cout << "push_ext_value\n";
++
++    assert(!marks.empty());
++
++    const size_t argumentCount = stack.size() - marks.top();
++    assert(argumentCount == 2 || argumentCount == 3);
++    marks.pop();
++
++    const std::string value = boost::any_cast<std::string>(stack.top());
++    stack.pop();
++
++    std::string language;
++    if (argumentCount == 3) {
++        language = boost::any_cast<std::string>(stack.top());
++        stack.pop();
++    }
++
++    const std::string charset = boost::any_cast<std::string>(stack.top());
++    stack.pop();
++
++    try {
++        ContentDisposition::ExtValue extValue  = { 
++            charset, language, decodePercentEncoding(value) };
++        stack.push(extValue);
++    }
++    catch (const std::runtime_error &) {
++        //std::cerr << "decode error: " << value;
++    }
++}
++
++action push_ext_parm {
++    assert(stack.size() >= 2);
++    //std::cout << "push_ext_parm\n";
++
++    const ContentDisposition::ExtValue value = 
++        boost::any_cast<ContentDisposition::ExtValue>(stack.top());
++    stack.pop();
++
++    const std::string key = boost::any_cast<std::string>(stack.top());
++    stack.pop();
++
++    ContentDisposition::ExtParameter parm(key, value);
++    stack.push(parm);
++}
++
++action push_content_disposition {
++    if (!stack.empty()) {
++        //std::cout << "push_content_disposition: " << stack.size() << '\n';
++
++        ContentDisposition::Parameters parms;
++        ContentDisposition::ExtParameters extParms;
++        while (stack.size() > 1) { // pop parameters
++            try {
++                const ContentDisposition::Parameter parm = 
++                    boost::any_cast<ContentDisposition::Parameter>(stack.top());
++                stack.pop();
++
++                parms.insert(parm);
++            }
++            catch (const boost::bad_any_cast &) {
++                const ContentDisposition::ExtParameter extParm = 
++                    boost::any_cast<
++                        ContentDisposition::ExtParameter>(stack.top());
++                stack.pop();
++
++                extParms.insert(extParm);
++            }
++        }
++
++        const std::string type = boost::any_cast<std::string>(stack.top());
++        stack.pop();
++
++        ContentDisposition contentDisposition = { type, parms, extParms };
++        stack.push(contentDisposition);
++    }
++}
++
++action to_lower {
++    assert(!stack.empty());
++    std::string token = boost::any_cast<std::string>(stack.top());
++    stack.pop();
++    //std::cout << "to_lower: " << token << '\n';
++
++    boost::algorithm::to_lower(token);
++    stack.push(token);
++}
++
++action mark_stack { 
++    marks.push(stack.size());
++    //std::cout << "mark stack: " 
++    //          << marks.size() << "-" << stack.size() << '\n';
++}
++
++action unmark_stack {
++    assert(!stack.empty());
++    marks.pop();
++    //std::cout << "unmark stack: " << marks.size() << '\n';
++}
++
++action unwind_stack {
++    assert(!marks.empty());
++
++    //std::cout << "unwinding stack from " << stack.size() 
++    //          << " to " << marks.top() << '\n';
++
++    const size_t pos = marks.top();
++    marks.pop();
++
++    while (stack.size() > pos) {
++        stack.pop();
++    }
++}
++
++action consume_parm {
++    while ((p != pe) && (*p != ';')) ++p;
++}
++
++}%%
++
++static int htoi(const char d) 
++{
++    if ('0' <= d && d <= '9') return d - '0';
++    if ('A' <= d && d <= 'F') return 10 + d - 'A';
++    if ('a' <= d && d <= 'f') return 10 + d - 'a';
++    throw std::runtime_error("htoi");
++}
++
++static std::string decodePercentEncoding(const std::string &value) 
++{
++    std::string result;
++    for (size_t i = 0u, len = value.size(); i < len; ++i) {
++        const char c = value[i];
++        if (c != '%') {
++            result += c;
++            continue;
++        }
++
++        const size_t last = len - 1;
++        if (i+2 > last) {
++            throw std::runtime_error("decodePercentEncode");
++        }
++
++        const int decoded = htoi(value[i+1]) * 16 + htoi(value[i+2]);
++        result += decoded;
++        i += 2;
++    }
++    return result;
++}
++
++boost::optional<ContentDisposition>
++parse(const char *buf, const size_t size)
++try {
++    const char *p = buf;
++    const char *pe = buf + size;
++    const char *eof = pe;
++    const char *mark = NULL;
++    int cs;
++    std::stack<boost::any> stack;
++    std::stack<size_t> marks;
++
++    %%{
++        machine main;
++        include actions;
++        include RFC6266 "rfc6266.rl";
++
++        main := content_disposition CRLF;
++
++        write data noerror nofinal;
++
++        write init;
++        write exec;
++    }%%
++
++    if (stack.empty()) return boost::none;
++
++    return boost::any_cast<ContentDisposition>(stack.top());
++}
++catch (...) {
++    //std::cerr << "uncought exception\n";
++    return boost::none;
++}
+diff --git a/transfer-plugins/curl/content_disposition/rfc2616.rl b/transfer-plugins/curl/content_disposition/rfc2616.rl
+new file mode 100644
+index 0000000..b9c0e73
+--- /dev/null
++++ b/transfer-plugins/curl/content_disposition/rfc2616.rl
+@@ -0,0 +1,35 @@
++%%{
++machine RFC2616;
++
++alphtype unsigned int;
++
++OCTET = 0x00..0xff;
++CHAR  = 0..127;
++UPALPHA = [A-Z];
++LOALPHA = [a-z];
++ALPHA = UPALPHA | LOALPHA;
++DIGIT = [0-9];
++CTL   = 0..31 | 127;
++CR    = 13;
++LF    = 10;
++SP    = 32;
++HT    = 9;
++
++CRLF  = CR LF;
++LWS   = CRLF? (SP | HT)+;
++TEXT  = (OCTET - CTL) | LWS;
++
++_ = LWS*; # Shorthand for implied LWS
++
++separator     = [()<>@,;:\\"/\[\]?={}\t ];
++token         = (CHAR - CTL - separator)+ 
++    > mark % push_token;
++
++qdtext        = TEXT - '"';
++quoted_pair   = "\\" CHAR;
++quoted_string = ('"' (qdtext | quoted_pair)* '"') 
++    > mark % push_quoted_string;
++
++value = token | quoted_string;
++
++}%%
+diff --git a/transfer-plugins/curl/content_disposition/rfc5646.rl b/transfer-plugins/curl/content_disposition/rfc5646.rl
+new file mode 100644
+index 0000000..a510a07
+--- /dev/null
++++ b/transfer-plugins/curl/content_disposition/rfc5646.rl
+@@ -0,0 +1,65 @@
++%%{
++machine RFC5646;
++
++#ALPHA = 0x41..0x5a | 0x61..0x7a; # from RFC5234
++#DIGIT = 0x30..0x39;              # from RFC5234
++
++alphanum = ALPHA | DIGIT;
++
++regular = "art-lojban"
++        | "cel-gaulish"
++        | "no-bok"
++        | "no-nyn"
++        | "zh-guoyu"
++        | "zh-hakka"
++        | "zh-min"
++        | "zh-min-nan"
++        | "zh-xiang";
++
++irregular = "en-GB-oed"
++          | "i-ami"
++          | "i-bnn"
++          | "i-default"
++          | "i-enochian"
++          | "i-hak"
++          | "i-klingon"
++          | "i-lux"
++          | "i-mingo"
++          | "i-navajo"
++          | "i-pwn"
++          | "i-tao"
++          | "i-tay"
++          | "i-tsu"
++          | "sgn-BE-FR"
++          | "sgn-BE-NL"
++          | "sgn-CH-DE";
++
++#grandfathered = irregular | regular;
++grandfathered = irregular;  # regular matches as langtag
++
++privateuse = "x" ("-" alphanum{1,8}){1,};
++
++singleton = DIGIT | 0x41..0x57  # A - W
++                  | 0x59..0x5a  # Y - Z
++                  | 0x61..0x77  # a - w
++                  | 0x79..0x7a; # y - z
++
++extension = singleton ("-" alphanum{2,8}){1,};
++
++variant = alphanum{5,8} | (DIGIT alphanum{3});
++
++region = ALPHA{2};
++
++script = ALPHA{4};
++
++extlang = ALPHA{3} ("-" ALPHA{3}){,2};
++
++language = ALPHA{2,3} ("-" extlang)? | ALPHA{4} | ALPHA{5,8};
++
++langtag = language ("-" script)? ("-" region)? 
++                   ("-" variant)* ("-" extension)* ("-" privateuse)?;
++
++Language_Tag = (langtag | privateuse | grandfathered)
++    > mark % push_token;
++
++}%%
+diff --git a/transfer-plugins/curl/content_disposition/rfc5987.rl b/transfer-plugins/curl/content_disposition/rfc5987.rl
+new file mode 100644
+index 0000000..5f217d3
+--- /dev/null
++++ b/transfer-plugins/curl/content_disposition/rfc5987.rl
+@@ -0,0 +1,27 @@
++%%{
++machine RFC5987;
++
++include RFC2616 "rfc2616.rl";
++include RFC5646 "rfc5646.rl";
++
++mime_charsetc = ALPHA | DIGIT | [!#$%&+-^_`{}~];
++mime_charset = mime_charsetc+;
++
++#charset = "UTF-8"i | "ISO-8859-1"i | mime_charset;
++charset = mime_charset 
++    > mark % push_token;
++
++attr_char = ALPHA | DIGIT | [!#$&+-.^_`|~];
++
++HEXDIG = DIGIT | [A-F];          # from RFC2234
++pct_encoded = "%" HEXDIG HEXDIG; # from RFC3986
++
++value_chars = ((pct_encoded | attr_char)*)
++    > mark % push_token;
++
++ext_value = (charset "'" Language_Tag? "'" value_chars)
++    > mark_stack
++    <>err unmark_stack
++    % push_ext_value;
++
++}%%
+diff --git a/transfer-plugins/curl/content_disposition/rfc6266.rl b/transfer-plugins/curl/content_disposition/rfc6266.rl
+new file mode 100644
+index 0000000..9c8b704
+--- /dev/null
++++ b/transfer-plugins/curl/content_disposition/rfc6266.rl
+@@ -0,0 +1,40 @@
++%%{
++machine RFC6266;
++
++include RFC2616 "rfc2616.rl";
++include RFC5987 "rfc5987.rl";
++
++ext_token = token "*";
++
++extended_key = ext_token
++    % to_lower;
++
++extended_parm = (ext_token _ "=" _ ext_value)
++    % push_ext_parm;
++
++normal_key = (token - ext_token)
++    % to_lower;
++
++normal_parm = (normal_key _ "=" _ value)
++    % push_parm;
++
++disposition_parm = (normal_parm | extended_parm)
++    > mark_stack 
++    % unmark_stack
++    <err unwind_stack 
++#    $err { std::cout << *(p-1) << "[" << *p << "]\n"; }
++    $err consume_parm
++    $err { fhold; fgoto next_parm; };
++
++inline_type     = "inline"i     > mark % push_token;
++attachment_type = "attachment"i > mark % push_token;
++disp_ext_type   = token - inline_type - attachment_type;
++
++disposition_type = (inline_type | attachment_type | disp_ext_type)
++    % to_lower;
++
++content_disposition = (_ "Content-Disposition"i _ ":" _ 
++                disposition_type next_parm: (_ ";" _ disposition_parm)*)
++    % push_content_disposition;
++
++}%%
+diff --git a/transfer-plugins/curl/curl.cpp b/transfer-plugins/curl/curl.cpp
+new file mode 100644
+index 0000000..26830fa
+--- /dev/null
++++ b/transfer-plugins/curl/curl.cpp
+@@ -0,0 +1,114 @@
++#include "curl.h"
++
++#include <QMutex>
++#include <QMutexLocker>
++
++#include <KDebug>
++#include <KUrl>
++
++Curl::Curl(const KUrl &url)
++    : m_handle(0), m_errorBuffer(), m_url(url)
++{
++    kDebug(5001) << url;
++
++    init();
++
++    m_handle = curl_easy_init();
++    if (m_handle == NULL) {
++        throw Error(CURLE_FAILED_INIT);
++    }
++
++    reset();
++}
++
++Curl::~Curl()
++{
++    kDebug(5001);
++    curl_easy_cleanup(m_handle);
++}
++
++void Curl::reset()
++{
++    kDebug(5001);
++
++    curl_easy_reset(m_handle);
++
++    setOption(CURLOPT_URL, m_url.url().toAscii().constData());
++    setOption(CURLOPT_ERRORBUFFER, m_errorBuffer);
++}
++
++void Curl::perform()
++{
++    kDebug(5001);
++    const CURLcode res = curl_easy_perform(m_handle);
++    if (res == CURLE_ABORTED_BY_CALLBACK) {
++        throw Canceled();
++    }
++    else if (res != CURLE_OK) {
++        throw Error(res);
++    }
++}
++
++void Curl::getInfo(const CURLINFO info, double *ptr) const
++{
++    const CURLcode rv = curl_easy_getinfo(m_handle, info, ptr);
++    if (rv != CURLE_OK) {
++        throw Error(rv);
++    }
++}
++
++const char *Curl::errorDetail() const
++{
++    const size_t size = sizeof(m_errorBuffer) / sizeof(m_errorBuffer[0]);
++    m_errorBuffer[size-1] = '\0';
++
++    return m_errorBuffer;
++}
++
++/*
++ * Static members
++ */
++static bool initialized = false;
++static QMutex mutex;
++
++void Curl::init()
++{
++    QMutexLocker locker(&::mutex);
++
++    if (::initialized) return;
++
++    CURLcode rv = curl_global_init(CURL_GLOBAL_ALL);
++    if (rv != CURLE_OK) {
++        throw Error(rv);
++    }
++
++    ::initialized = true;
++}
++
++void Curl::cleanUp()
++{
++    QMutexLocker locker(&::mutex);
++
++    if (!::initialized) return;
++
++    curl_global_cleanup();
++
++    ::initialized = false;
++}
++
++/*
++ * Exceptions
++ */
++Curl::Error::Error(const CURLcode code)
++    : m_code(code)
++{}
++
++const char* Curl::Error::what() const throw()
++{
++    return curl_easy_strerror(m_code);
++}
++
++CURLcode Curl::Error::code() const
++{
++    return m_code;
++}
+diff --git a/transfer-plugins/curl/curl.h b/transfer-plugins/curl/curl.h
+new file mode 100644
+index 0000000..b05e2d1
+--- /dev/null
++++ b/transfer-plugins/curl/curl.h
+@@ -0,0 +1,70 @@
++#ifndef CURL_H
++#define CURL_H
++
++#include <stdexcept>
++
++#include <KUrl>
++
++#include <curl/curl.h>
++
++class Curl
++{
++public:
++    class Canceled;
++    class Error;
++
++    Curl(const KUrl &);
++    ~Curl();
++
++    void perform();
++
++    void reset();
++
++    template<typename P>
++    void setOption(const CURLoption option, const P param);
++
++    // overload second argument if necesarry
++    void getInfo(const CURLINFO, double *) const;
++
++    const char *errorDetail() const;
++
++private:
++    static void init();
++    static void cleanUp();
++
++private:
++    CURL *m_handle;
++    // Document require "at least" CURL_ERROR_SIZE
++    mutable char m_errorBuffer[CURL_ERROR_SIZE*2];
++    KUrl m_url;
++};
++
++class Curl::Error : public std::exception
++{
++public:
++    Error(const CURLcode code);
++
++    virtual const char *what() const throw(); // std::exception
++
++    CURLcode code() const;
++
++private:
++    CURLcode m_code;
++};
++
++class Curl::Canceled : public Curl::Error
++{
++public:
++    Canceled() : Curl::Error(CURLE_ABORTED_BY_CALLBACK) {}
++};
++
++template<typename P>
++inline void Curl::setOption(const CURLoption option, const P param)
++{
++    CURLcode rv = curl_easy_setopt(m_handle, option, param);
++    if (rv != CURLE_OK) {
++        throw Error(rv);
++    }
++}
++
++#endif // CURL_H
+diff --git a/transfer-plugins/curl/curlthread.cpp b/transfer-plugins/curl/curlthread.cpp
+new file mode 100644
+index 0000000..5996ff1
+--- /dev/null
++++ b/transfer-plugins/curl/curlthread.cpp
+@@ -0,0 +1,314 @@
++#include "curlthread.h"
++
++#include "curl.h"
++#include "settings.h"
++
++#include <string>
++
++#include <boost/algorithm/string/predicate.hpp>
++#include <boost/lexical_cast.hpp>
++#include <boost/regex.hpp>
++
++#include <KUrl>
++#include <KDebug>
++
++#include <QFileInfo>
++
++#include "curlthread_p.h"
++#include "content_disposition/content_disposition.hpp"
++
++/*
++ * CurlThread implementation
++ */
++CurlThread::CurlThread(const KUrl &src, const KUrl &dest) // nothrow()
++    : m_private(new Private(*this, src, dest))
++{}
++
++CurlThread::~CurlThread() // nothrow()
++{}
++
++void CurlThread::run() // nothrow()
++try {
++    m_private->run();
++}
++catch (const std::exception &e) {
++    kDebug(5001) << "Uncaught exception:" << e.what();
++    cancel();
++    emit abort();
++}
++
++void CurlThread::cancel() // nothrow()
++{
++    m_private->cancel();
++}
++
++/*
++ * CurlThread::Private implementation
++ */
++CurlThread::Private::Private(CurlThread &parent,
++                             const KUrl &src, const KUrl &dest)
++    : m_public(parent),
++      m_src(src),
++      m_dest(dest),
++      m_cancel(false),
++      m_contentLength(0),
++      m_offset(0),
++      m_written(0),
++      m_speedLimit(CurlSettings::downloadLimit() * 1024),
++      m_updateInterval(CurlSettings::updateInterval()),
++      m_curl(src),
++      m_serverSuppliedFilename()
++{
++    kDebug(5001) << "src:" << src << ", dest:" << dest;
++
++    if (m_src.scheme() != "http") {
++        throw UnsupportedProtocol(m_src);
++    }
++    if (!m_dest.isLocalFile()) {
++        throw DestinationIsNotLocal(m_dest);
++    }
++
++    assert(m_updateInterval);
++
++    this->connect(CurlSettings::self(), SIGNAL(configChanged()),
++                                  this,   SLOT(slotConfigChanged()));
++}
++
++CurlThread::Private::~Private()
++{
++    kDebug(5001);
++}
++
++void CurlThread::Private::run()
++{
++    kDebug(5001) << "src:" << m_src.url().toAscii().constData()
++                 << "dest:" << m_dest.fileName().toLocal8Bit();
++
++    fetchHeader();
++
++    KUrl destUrl = m_dest;
++    if (!m_serverSuppliedFilename.isNull()) {
++        destUrl.setFileName(m_serverSuppliedFilename);
++    }
++
++    const QString &destPath = destUrl.path();
++    const QString &path = destPath + ".part";
++    prepareDestination(path);
++
++    m_file.open(path.toLocal8Bit(), m_offset ? "ab" : "wb");
++
++    try {
++        fetchBody();
++
++        emit m_public.finish(static_cast<qlonglong>(m_offset + m_written));
++
++        if (QFile::exists(destPath)) {
++            if (!QFile::remove(destPath)) {
++                kDebug(5001) << "Fail to remove" << destPath;
++                throw RuntimeError("Fail to remove file.");
++            }
++        }
++        if (!QFile::rename(path, destPath)) {
++            kDebug(5001) << "Fail to rename" << path << "to" << m_dest.path();
++            throw RuntimeError("Fail to rename file.");
++        }
++    }
++    catch (const Curl::Canceled &) {
++        // simply do nothing
++    }
++}
++
++void CurlThread::Private::prepareDestination(const QString &path)
++{
++    QFileInfo fileInfo(path);
++    if (!fileInfo.exists()) return;
++
++    kDebug(5001) << "destination file already exists.";
++    qint64 size = fileInfo.size();
++    if (size < m_contentLength) {
++        kDebug(5001) << "resume from point:" << size;
++        m_offset = size;
++    }
++    else {
++        kDebug(5001) << "Existing destination file is larger or "
++                        "equal than content length.";
++        if (!QFile::remove(path)) {
++            kDebug(5001) << "Fail to remove unwanted existing "
++                            "destination file.";
++            throw RuntimeError("Fail to remove file.");
++        }
++    }
++}
++
++void CurlThread::Private::fetchHeader()
++{
++    m_curl.reset();
++
++    m_curl.setOption(CURLOPT_HEADERFUNCTION, &headerCallback);
++    m_curl.setOption(CURLOPT_HEADERDATA, this);
++    m_curl.setOption(CURLOPT_NOBODY, 1);
++    m_curl.setOption(CURLOPT_FOLLOWLOCATION, 1);
++
++    m_curl.perform();
++}
++
++void CurlThread::Private::fetchBody()
++{
++    m_curl.reset();
++
++    m_curl.setOption(CURLOPT_RESUME_FROM_LARGE, m_offset);
++
++    m_curl.setOption(CURLOPT_WRITEFUNCTION, &writeCallback);
++    m_curl.setOption(CURLOPT_WRITEDATA, this);
++
++    m_curl.setOption(CURLOPT_NOPROGRESS, 0);
++    m_curl.setOption(CURLOPT_XFERINFOFUNCTION, &progressCallback);
++    m_curl.setOption(CURLOPT_XFERINFODATA, this);
++
++    m_curl.setOption(CURLOPT_FOLLOWLOCATION, 1);
++
++    m_curl.perform();
++}
++
++void CurlThread::Private::cancel()
++{
++    m_cancel = true;
++}
++
++void CurlThread::Private::emitTotalSize(const qlonglong size) const
++{
++    emit m_public.totalSize(size);
++}
++
++void CurlThread::Private::emitProgress(const qlonglong downloaded,
++                                       const double speed) const
++{
++    emit m_public.progress(downloaded, speed);
++}
++
++size_t CurlThread::Private::headerCallback(char* const ptr, const size_t size,
++                                           const size_t nmemb, void* const o)
++{
++    Private* const obj = static_cast<Private*>(o);
++    const std::string line(ptr, size*nmemb);
++
++    bool handled = obj->handleContentLength(line);
++    if (!handled) {
++        handled = obj->handleContentDisposition(line);
++    }
++
++    return size*nmemb;
++}
++
++bool CurlThread::Private::handleContentLength(const std::string &line)
++{
++    static const boost::regex contentLengthRe(
++        "Content-Length\\s*:\\s*([0-9]+)\\s*\\r\\n", boost::regex::icase);
++    boost::cmatch result;
++    if (regex_match(line.c_str(), result, contentLengthRe)) {
++        kDebug(5001) << line.c_str();
++        std::string value(result[1].first, result[1].second);
++        try {
++            this->m_contentLength = boost::lexical_cast<qlonglong>(value);
++            this->emitTotalSize(this->m_contentLength);
++        }
++        catch (const boost::bad_lexical_cast &e) {
++            throw BadHeader("Content-Length", value);
++        }
++        return true;
++    }
++    else {
++        return false;
++    }
++}
++
++bool CurlThread::Private::handleContentDisposition(const std::string &line)
++{
++    if (!boost::algorithm::istarts_with(line, "Content-Disposition")) {
++        return false;
++    }
++    kDebug(5001) << line.c_str();
++
++    const boost::optional<ContentDisposition>
++                    contentDisposition = parse(line.data(), line.size());
++    if (!contentDisposition) return false;
++    kDebug(5001) << "parse line successfully.";
++
++    const ContentDisposition::Parameters &params = contentDisposition->params;
++    const ContentDisposition::Parameters::const_iterator
++                                                it = params.find("filename");
++    if (it == params.end()) return false;
++
++    const std::string &value = it->second;
++
++    kDebug(5001) << value.c_str();
++    //1) Decode url encode.
++    const KUrl &url = KUrl::fromEncoded(("file:///" + value).c_str());
++    //2) Extract only filename part of the path.
++    m_serverSuppliedFilename = url.fileName();
++
++    return true;
++}
++
++int CurlThread::Private::progressCallback(void *data,
++            curl_off_t dltotal, curl_off_t dlnow, curl_off_t, curl_off_t)
++{
++    Private* const obj = static_cast<Private*>(data);
++    Progress* const progress = &obj->m_progress;
++
++    time_t now;
++    if (time(&now) == -1) {
++        using namespace boost::system;
++        throw system_error(errno, system_category());
++    }
++    const curl_off_t dSec = now - progress->time;
++    if (dSec < obj->m_updateInterval) {
++        return CURLE_OK;
++    }
++
++    if (obj->m_cancel) {
++        return -1;
++    }
++
++    if (obj->m_speedLimit) {
++        kDebug(5001) << "limit download speed:" << obj->m_speedLimit;
++        obj->m_curl.setOption(CURLOPT_MAX_RECV_SPEED_LARGE,
++                        static_cast<curl_off_t>(obj->m_speedLimit));
++    }
++
++    const curl_off_t dSize = dlnow - progress->downloaded;
++
++    progress->downloaded = dlnow;
++    progress->time = now;
++
++    const double speed = static_cast<double>(dSize / dSec);
++    const curl_off_t downloaded = obj->m_offset + progress->downloaded;
++    const int eta = speed ? (obj->m_contentLength - downloaded) / speed
++                          : 0;
++
++    kDebug(5001) << downloaded << "/" << obj->m_contentLength
++                 << dlnow << dltotal << speed << eta;
++    obj->emitProgress(downloaded, speed);
++
++    return CURLE_OK;
++}
++
++size_t CurlThread::Private::writeCallback(char* const ptr, const size_t size,
++                                    const size_t nmemb, void* const data)
++{
++    //kDebug(5001) << size << "*" << nmemb;
++    Private* const obj = static_cast<Private*>(data);
++    obj->m_written += size * nmemb;
++
++    return obj->m_file.write(ptr, size, nmemb);
++}
++
++void CurlThread::Private::slotConfigChanged()
++{
++    m_speedLimit = CurlSettings::downloadLimit() * 1024;
++    m_updateInterval = CurlSettings::updateInterval();
++    assert(m_updateInterval);
++}
++
++#include "curlthread_p.moc"
++#include "curlthread.moc"
+diff --git a/transfer-plugins/curl/curlthread.h b/transfer-plugins/curl/curlthread.h
+new file mode 100644
+index 0000000..40129a2
+--- /dev/null
++++ b/transfer-plugins/curl/curlthread.h
+@@ -0,0 +1,96 @@
++#ifndef CURLTHREAD_H
++#define CURLTHREAD_H
++
++#include <stdexcept>
++
++#include <boost/noncopyable.hpp>
++#include <boost/scoped_ptr.hpp>
++
++#include <QThread>
++
++#include <KUrl>
++
++class CurlThread : public QThread, private boost::noncopyable
++{
++    Q_OBJECT
++public:
++    class RuntimeError;
++    class DestinationIsNotLocal;
++    class UnsupportedProtocol;
++    class BadHeader;
++
++    CurlThread(const KUrl &src, const KUrl &dest); // throw()
++    ~CurlThread(); // throw()
++
++    virtual void run(); // throw() QThread
++
++    void cancel(); //throw()
++
++signals:
++    void totalSize(const qlonglong) const;
++    void progress(const qlonglong downloaded, const double bytePerSec) const;
++    void finish(const qlonglong) const;
++    void abort();
++
++private:
++    struct Private;
++    const boost::scoped_ptr<Private> m_private;
++};
++
++class CurlThread::RuntimeError : public std::runtime_error
++{
++public:
++    RuntimeError(const char *msg)
++        : std::runtime_error(msg) {}
++};
++
++class CurlThread::DestinationIsNotLocal : public RuntimeError
++{
++public:
++    DestinationIsNotLocal(const KUrl &url)
++        : RuntimeError("Destination URL isn't local file."),
++          m_url(url)
++    {}
++
++    virtual ~DestinationIsNotLocal() throw() {}
++
++    const KUrl &url() const { return m_url; }
++
++private:
++    KUrl m_url;
++};
++
++class CurlThread::UnsupportedProtocol : public RuntimeError
++{
++public:
++    UnsupportedProtocol(const KUrl &url)
++        : RuntimeError("Unsupported protocol."),
++          m_url(url)
++    {}
++
++    virtual ~UnsupportedProtocol() throw() {}
++
++    const KUrl &url() const { return m_url; }
++
++private:
++    KUrl m_url;
++};
++
++class CurlThread::BadHeader : public RuntimeError
++{
++public:
++    BadHeader(const std::string &key, const std::string &value)
++        : RuntimeError("Bad HTTP header is returned."),
++          m_key(key), m_value(value) {}
++
++    virtual ~BadHeader() throw() {}
++
++    const std::string &key() const { return m_key; }
++    const std::string &value() const { return m_value; }
++
++private:
++    std::string m_key;
++    std::string m_value;
++};
++
++#endif // CURLTHREAD_H
+diff --git a/transfer-plugins/curl/curlthread_p.h b/transfer-plugins/curl/curlthread_p.h
+new file mode 100644
+index 0000000..b7bdba7
+--- /dev/null
++++ b/transfer-plugins/curl/curlthread_p.h
+@@ -0,0 +1,110 @@
++#ifndef CURLTHREAD_P_H
++#define CURLTHREAD_P_H
++
++#include "curlthread.h"
++#include "curl.h"
++
++#include <cstdio>
++
++#include <boost/system/system_error.hpp>
++
++#include <QObject>
++
++#include <time.h>
++
++struct Progress
++{
++    qlonglong downloaded;
++    time_t time;
++
++    Progress()
++        : downloaded(0)
++    {
++        if (::time(&this->time) == -1) {
++            using namespace boost::system;
++            throw system_error(errno, system_category());
++        }
++    }
++};
++
++class File : private boost::noncopyable
++{
++public:
++    File() : m_fp(NULL) {}
++
++    ~File() {
++        if (m_fp) {
++            ::fclose(m_fp);
++        }
++    }
++
++    void open(const char *filename, const char *mode) {
++        m_fp = ::fopen(filename, mode);
++        if (m_fp == NULL) {
++            using namespace boost::system;
++            throw system_error(errno, system_category());
++        }
++    }
++
++    size_t write(const char *buf, size_t size, size_t nmemb) {
++        assert(m_fp);
++        size_t rv = ::fwrite(buf, size, nmemb, m_fp);
++        if (rv != nmemb) {
++            throw std::runtime_error("Fail to write data to file.");
++        }
++        return rv;
++    }
++
++private:
++    ::FILE *m_fp;
++};
++
++class CurlThread::Private : public QObject, private boost::noncopyable
++{
++    Q_OBJECT
++public:
++    Private(CurlThread &parent, const KUrl &src, const KUrl &dest);
++    ~Private();
++
++    void run();
++    void cancel();
++
++    void prepareDestination(const QString &path);
++
++    void fetchHeader();
++    void fetchBody();
++
++    void emitTotalSize(const qlonglong size) const;
++    void emitProgress(const qlonglong downloaded,
++                      const double bytePerSec) const;
++
++    bool handleContentLength(const std::string &line);
++    bool handleContentDisposition(const std::string &line);
++
++    static size_t headerCallback(char* const ptr, const size_t size,
++                                 const size_t nmemb, void* const);
++    static int progressCallback(void *data, curl_off_t dltotal,
++                                curl_off_t dlnow, curl_off_t, curl_off_t);
++    static size_t writeCallback(char* const ptr, const size_t size,
++                                const size_t nmemb, void* const data);
++
++private slots:
++    void slotConfigChanged();
++
++private:
++    CurlThread &m_public;
++    KUrl m_src;
++    KUrl m_dest;
++    Progress m_progress;
++    bool m_cancel;
++    qlonglong m_contentLength;
++    qlonglong m_offset;
++    File m_file;
++    qlonglong m_written;
++    qlonglong m_speedLimit;
++    size_t m_updateInterval;
++    Curl m_curl;
++    QString m_serverSuppliedFilename;
++};
++
++#endif // CURLTHREAD_P_H
+diff --git a/transfer-plugins/curl/curltransfer.cpp b/transfer-plugins/curl/curltransfer.cpp
+new file mode 100644
+index 0000000..d843795
+--- /dev/null
++++ b/transfer-plugins/curl/curltransfer.cpp
+@@ -0,0 +1,103 @@
++#include "curltransfer.h"
++
++#include "curlthread.h"
++
++#include <KDebug>
++#include <KLocalizedString>
++
++CurlTransfer::CurlTransfer(TransferGroup *parent, TransferFactory *factory,
++                 Scheduler *scheduler, const KUrl &src, const KUrl &dest,
++                 const QDomElement *e /*= 0*/)
++    : Transfer(parent, factory, scheduler, src, dest, e)
++{
++    kDebug(5001) << "src:" << src << ", dest:" << dest;
++    setCapabilities(Transfer::Cap_Moving | Transfer::Cap_Resuming);
++}
++
++CurlTransfer::~CurlTransfer()
++{
++    kDebug(5001);
++}
++
++void CurlTransfer::start()
++try {
++    kDebug(5001);
++    if (this->status() == Job::Running || this->status() == Job::Finished) {
++        return;
++    }
++    if (m_curlThread && m_curlThread->isRunning()) return;
++
++    m_curlThread.reset(new CurlThread(this->m_source, this->m_dest));
++
++    this->connect(
++        m_curlThread.get(), SIGNAL(totalSize(const qlonglong)),
++                      this,   SLOT(slotTotalSize(const qlonglong)));
++    this->connect(
++        m_curlThread.get(), SIGNAL(progress(const qlonglong, const double)),
++                      this,   SLOT(slotProgress(const qlonglong, const double)));
++    this->connect(
++        m_curlThread.get(), SIGNAL(finish(const qlonglong)),
++                      this,   SLOT(slotFinished(const qlonglong)));
++
++    m_curlThread->start();
++
++    this->setStatus(Job::Running);
++    this->setTransferChange(Tc_Status, true);
++}
++catch (const std::exception &e) {
++    kDebug(5001) << e.what();
++}
++
++void CurlTransfer::stop()
++try {
++    kDebug(5001);
++
++    if ((this->status() == Job::Stopped) ||
++        (this->status() == Job::Finished))
++    {
++        return;
++    }
++
++    m_curlThread->cancel();
++
++    this->setStatus(Job::Stopped);
++    this->m_downloadSpeed = 0;
++    this->setTransferChange(Tc_Status | Tc_DownloadSpeed, true);
++}
++catch (const std::exception &e) {
++    kDebug(5001) << e.what();
++}
++
++void CurlTransfer::deinit(Transfer::DeleteOptions options)
++{
++    kDebug(5001);
++}
++
++void CurlTransfer::slotTotalSize(const qlonglong size)
++{
++    kDebug(5001) << size;
++    this->m_totalSize = size;
++    this->setTransferChange(Tc_TotalSize, true);
++}
++
++void CurlTransfer::slotProgress(const qlonglong downloaded,
++                                const double speed)
++{
++    kDebug(5001) << downloaded << speed;
++    this->m_downloadedSize = downloaded;
++    this->m_percent = (this->m_downloadedSize * 100) / m_totalSize;
++    this->m_downloadSpeed = speed;
++    this->setTransferChange(Tc_DownloadedSize | Tc_Percent |
++                                                Tc_DownloadSpeed, true);
++}
++
++void CurlTransfer::slotFinished(const qlonglong downloaded)
++{
++    kDebug(5001) << downloaded << this->m_totalSize;
++    this->setStatus(Job::Finished);
++    this->m_downloadedSize = downloaded;
++    this->m_percent = (downloaded / this->m_totalSize) * 100;
++    this->m_downloadSpeed = 0;
++    this->setTransferChange(Tc_Status | Tc_DownloadedSize |
++                            Tc_Percent | Tc_DownloadSpeed, true);
++}
+diff --git a/transfer-plugins/curl/curltransfer.h b/transfer-plugins/curl/curltransfer.h
+new file mode 100644
+index 0000000..eb1f218
+--- /dev/null
++++ b/transfer-plugins/curl/curltransfer.h
+@@ -0,0 +1,37 @@
++#ifndef CURLTRANSFER_H
++#define CURLTRANSFER_H
++
++#include <boost/noncopyable.hpp>
++#include <boost/scoped_ptr.hpp>
++
++#include "core/transfer.h"
++
++class CurlThread;
++
++class CurlTransfer : public Transfer, boost::noncopyable
++{
++    Q_OBJECT
++public:
++    CurlTransfer(TransferGroup *parent, TransferFactory *factory,
++                 Scheduler *scheduler, const KUrl &src, const KUrl &dest,
++                 const QDomElement *e = 0); // throw()
++
++    virtual ~CurlTransfer(); // throw()
++
++private:
++    // @override Job
++    virtual void start(); // throw()
++    virtual void stop();  // throw()
++    // @override Transfer
++    virtual void deinit(Transfer::DeleteOptions options); // throw()
++
++private slots:
++    void slotTotalSize(const qlonglong);
++    void slotProgress(const qlonglong downloaded, const double speed);
++    void slotFinished(const qlonglong);
++
++private:
++    boost::scoped_ptr<CurlThread> m_curlThread;
++};
++
++#endif // CURLTRANSFER_H
+diff --git a/transfer-plugins/curl/curltransferfactory.cpp b/transfer-plugins/curl/curltransferfactory.cpp
+new file mode 100644
+index 0000000..b81c586
+--- /dev/null
++++ b/transfer-plugins/curl/curltransferfactory.cpp
+@@ -0,0 +1,33 @@
++#include "curltransferfactory.h"
++
++#include "curltransfer.h"
++
++#include <QStringList>
++
++KGET_EXPORT_PLUGIN(CurlTransferFactory)
++
++CurlTransferFactory::CurlTransferFactory(QObject *parent, const QVariantList &args)
++    : TransferFactory(parent, args)
++{}
++
++Transfer *CurlTransferFactory::createTransfer(
++                        const KUrl &src, const KUrl &dest,
++                        TransferGroup *parent, Scheduler *scheduler,
++                        const QDomElement *e /*= 0*/)
++{
++    kDebug(5001) << "CurlTransferFactory::createTransfer";
++
++    if (!isSupported(src)) return NULL;
++
++    return new CurlTransfer(parent, this, scheduler, src, dest, e);
++}
++
++bool CurlTransferFactory::isSupported(const KUrl &url) const
++{
++    static const QStringList protocols = QStringList() << "http";
++
++    QString protocol = url.protocol();
++    kDebug(5001) << "Protocol:" << protocol;
++
++    return protocols.contains(protocol);
++}
+diff --git a/transfer-plugins/curl/curltransferfactory.h b/transfer-plugins/curl/curltransferfactory.h
+new file mode 100644
+index 0000000..ed8b6db
+--- /dev/null
++++ b/transfer-plugins/curl/curltransferfactory.h
+@@ -0,0 +1,24 @@
++#ifndef CURLTRANSFERFACTORY_H
++#define CURLTRANSFERFACTORY_H
++
++#include "core/plugin/transferfactory.h"
++
++class Transfer;
++class QStringList;
++
++class CurlTransferFactory : public TransferFactory
++{
++    Q_OBJECT
++public:
++    CurlTransferFactory(QObject *parent, const QVariantList &args);
++
++    // TransferFactory
++    virtual Transfer *createTransfer(const KUrl &src, const KUrl &dest,
++                           TransferGroup *parent, Scheduler *scheduler,
++                           const QDomElement *n = 0);
++    virtual bool isSupported(const KUrl &) const;
++
++    //virtual QString displayName();
++};
++
++#endif // CURLTRANSFERFACTORY_H
+diff --git a/transfer-plugins/curl/kcm_widget.ui b/transfer-plugins/curl/kcm_widget.ui
+new file mode 100644
+index 0000000..da7dbea
+--- /dev/null
++++ b/transfer-plugins/curl/kcm_widget.ui
+@@ -0,0 +1,71 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<ui version="4.0">
++ <class>KcmWidget</class>
++ <widget class="QWidget" name="KcmWidget">
++  <property name="geometry">
++   <rect>
++    <x>0</x>
++    <y>0</y>
++    <width>400</width>
++    <height>74</height>
++   </rect>
++  </property>
++  <property name="windowTitle">
++   <string>Form</string>
++  </property>
++  <layout class="QVBoxLayout" name="verticalLayout_2">
++   <item>
++    <layout class="QFormLayout" name="formLayout">
++     <item row="0" column="0">
++      <widget class="QLabel" name="label">
++       <property name="text">
++        <string>Progress Update Interval:</string>
++       </property>
++       <property name="buddy">
++        <cstring>m_updateInterval</cstring>
++       </property>
++      </widget>
++     </item>
++     <item row="0" column="1">
++      <widget class="QSpinBox" name="m_updateInterval">
++       <property name="suffix">
++        <string> Second</string>
++       </property>
++       <property name="minimum">
++        <number>1</number>
++       </property>
++      </widget>
++     </item>
++     <item row="1" column="0">
++      <widget class="QLabel" name="label_2">
++       <property name="text">
++        <string>Download Speed Limit:</string>
++       </property>
++       <property name="buddy">
++        <cstring>m_downloadLimit</cstring>
++       </property>
++      </widget>
++     </item>
++     <item row="1" column="1">
++      <widget class="QSpinBox" name="m_downloadLimit">
++       <property name="specialValueText">
++        <string>Unlimited</string>
++       </property>
++       <property name="suffix">
++        <string> KiB</string>
++       </property>
++       <property name="maximum">
++        <number>1000000</number>
++       </property>
++       <property name="singleStep">
++        <number>100</number>
++       </property>
++      </widget>
++     </item>
++    </layout>
++   </item>
++  </layout>
++ </widget>
++ <resources/>
++ <connections/>
++</ui>
+diff --git a/transfer-plugins/curl/kcmwidget.cpp b/transfer-plugins/curl/kcmwidget.cpp
+new file mode 100644
+index 0000000..ad9f72e
+--- /dev/null
++++ b/transfer-plugins/curl/kcmwidget.cpp
+@@ -0,0 +1,29 @@
++#include "kcmwidget.h"
++
++#include "kget_export.h"
++
++#include "settings.h"
++
++KGET_EXPORT_PLUGIN_CONFIG(KcmWidget)
++
++KcmWidget::KcmWidget(QWidget* const parent, const QVariantList &args)
++    : KCModule(KGetFactory::componentData(), parent, args)
++{
++    ui.setupUi(this);
++    connect(ui.m_downloadLimit, SIGNAL(valueChanged(int)), SLOT(changed()));
++}
++
++void KcmWidget::load()
++{
++    kDebug(5001) << "Loading cURL config";
++    ui.m_updateInterval->setValue(CurlSettings::updateInterval());
++    ui.m_downloadLimit->setValue(CurlSettings::downloadLimit());
++}
++
++void KcmWidget::save()
++{
++    kDebug(5001) << "Saving cURL config";
++    CurlSettings::setUpdateInterval(ui.m_updateInterval->value());
++    CurlSettings::setDownloadLimit(ui.m_downloadLimit->value());
++    CurlSettings::self()->writeConfig();
++}
+diff --git a/transfer-plugins/curl/kcmwidget.h b/transfer-plugins/curl/kcmwidget.h
+new file mode 100644
+index 0000000..cafeaf8
+--- /dev/null
++++ b/transfer-plugins/curl/kcmwidget.h
+@@ -0,0 +1,22 @@
++#ifndef KCMWIDGET_H
++#define KCMWIDGET_H
++
++#include <KCModule>
++
++#include "ui_kcm_widget.h"
++
++class KcmWidget : public KCModule
++{
++    Q_OBJECT
++public:
++    KcmWidget(QWidget* const parent, const QVariantList &args = QVariantList());
++
++private slots:
++    virtual void save();
++    virtual void load();
++
++private:
++    Ui::KcmWidget ui;
++};
++
++#endif // KCMWIDGET_H
+diff --git a/transfer-plugins/curl/kget_curlfactory.desktop b/transfer-plugins/curl/kget_curlfactory.desktop
+new file mode 100644
+index 0000000..351cb49
+--- /dev/null
++++ b/transfer-plugins/curl/kget_curlfactory.desktop
+@@ -0,0 +1,23 @@
++[Desktop Entry]
++# service definition
++Type=Service
++X-KDE-ServiceTypes=KGet/Plugin
++Icon=kget
++
++# standard fields
++Name=cURL
++Comment=cURL file downloader plugin
++
++# options for library loader
++X-KDE-Library=kget_curlfactory
++X-KDE-KGet-plugintype=TransferFactory
++X-KDE-KGet-rank=100
++X-KDE-KGet-framework-version=1
++
++X-KDE-PluginInfo-Author=stream9
++X-KDE-PluginInfo-Email=stream009@gmail.com
++X-KDE-PluginInfo-Version=1.0
++X-KDE-PluginInfo-Category=Service
++X-KDE-PluginInfo-License=GPL
++X-KDE-PluginInfo-EnabledByDefault=true
++X-KDE-PluginInfo-Name=kget_curl_plugin
+diff --git a/transfer-plugins/curl/kget_curlfactory.kcfg b/transfer-plugins/curl/kget_curlfactory.kcfg
+new file mode 100644
+index 0000000..0970801
+--- /dev/null
++++ b/transfer-plugins/curl/kget_curlfactory.kcfg
+@@ -0,0 +1,15 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
++      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
++                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd" >
++  <kcfgfile name="kget_curlfactory.rc"/>
++  <group name="cURL">
++    <entry name="UpdateInterval" type="Int">
++      <default>1</default>
++    </entry>
++    <entry name="DownloadLimit" type="Int">
++      <default>0</default>
++    </entry>
++  </group>
++</kcfg>
+diff --git a/transfer-plugins/curl/kget_curlfactory_config.desktop b/transfer-plugins/curl/kget_curlfactory_config.desktop
+new file mode 100644
+index 0000000..2cf3f70
+--- /dev/null
++++ b/transfer-plugins/curl/kget_curlfactory_config.desktop
+@@ -0,0 +1,8 @@
++[Desktop Entry]
++Type=Service
++X-KDE-ServiceTypes=KCModule
++
++X-KDE-Library=kcm_kget_curlfactory
++X-KDE-ParentComponents=kget_curl_plugin
++
++Name=cURL
+diff --git a/transfer-plugins/curl/settings.kcfgc b/transfer-plugins/curl/settings.kcfgc
+new file mode 100644
+index 0000000..db447b8
+--- /dev/null
++++ b/transfer-plugins/curl/settings.kcfgc
+@@ -0,0 +1,5 @@
++ClassName=CurlSettings
++File=kget_curlfactory.kcfg
++Mutators=true
++Singleton=true
++Visibility=KDE_EXPORT
+-- 
+2.1.2
+

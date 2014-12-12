@@ -1,0 +1,25 @@
+From d69f1f601fdf9035dc0e07fe03f83bf496195c62 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sun, 25 May 2014 16:14:29 +0900
+Subject: [PATCH] Change configuration directory
+
+---
+ platforms/unix/platform_unix.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/platforms/unix/platform_unix.cpp b/platforms/unix/platform_unix.cpp
+index c383b96..a96daf7 100644
+--- a/platforms/unix/platform_unix.cpp
++++ b/platforms/unix/platform_unix.cpp
+@@ -106,7 +106,7 @@ QHash<QString, QList<QString> > PlatformUnix::getDirectories() {
+     out["plugins"] += QDir::homePath() + "/.launchy/plugins";
+     out["plugins"] += PLUGINS_PATH;
+ 
+-    out["config"] += QDir::homePath();
++    out["config"] += QDir::homePath() + "/.launchy";
+     out["portableConfig"] += qApp->applicationDirPath();
+     
+     if (QFile::exists(out["skins"].last() + "/Default"))
+-- 
+1.9.3
+

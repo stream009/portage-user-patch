@@ -1,0 +1,167 @@
+From 9bffe540f7b94ecb0d759b882c4f0f36e75ff431 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Fri, 4 Jul 2014 16:12:43 +0900
+Subject: [PATCH 2/2] Show count of remaining same tile in status bar
+
+---
+ GameData.cpp    | 29 +++++++++++++++++++++++++++++
+ GameData.h      |  4 ++++
+ boardwidget.cpp |  6 ++++++
+ boardwidget.h   |  2 ++
+ kmahjongg.cpp   | 13 +++++++++++++
+ kmahjongg.h     |  3 +++
+ 6 files changed, 57 insertions(+)
+
+diff --git a/GameData.cpp b/GameData.cpp
+index 3867b10..a9132b5 100644
+--- a/GameData.cpp
++++ b/GameData.cpp
+@@ -1002,6 +1002,35 @@ int GameData::moveCount()
+     return iPosCount / 2;
+ }
+ 
++namespace GameDataNS {
++
++size_t countMatchingTiles(const GameData &game, const POSITION &pos)
++{
++    size_t result = 1;
++    GameData &game_ = const_cast<GameData &>(game);
++    POSITION &pos_ = const_cast<POSITION &>(pos);
++
++    for (short E = 0; E < game.m_depth; E++) {
++        for (short Y = 0; Y < game.m_height - 1; Y++) {
++            for (short X = 0; X < game.m_width - 1; X++) {
++                POSITION target;
++                target.x = X;
++                target.y = Y;
++                target.e = E;
++                target.f = game_.BoardData(E, Y, X);
++                if (game_.MaskData(E, Y, X) == '1' &&
++                        game_.isMatchingTile(pos_, target)) {
++                    ++result;
++                }
++            }
++        }
++    }
++
++    return result;
++}
++
++} // namespace GameDataNS
++
+ short GameData::findAllMatchingTiles(POSITION &posA)
+ {
+     short Pos = 0;
+diff --git a/GameData.h b/GameData.h
+index e7ddbb9..6fddff8 100644
+--- a/GameData.h
++++ b/GameData.h
+@@ -238,5 +238,9 @@ private:
+     QVector<POSITION> PosTable;
+ };
+ 
++namespace GameDataNS {
++size_t countMatchingTiles(const GameData &, const POSITION &);
++}
++
+ 
+ #endif // GAMEDATA_H
+diff --git a/boardwidget.cpp b/boardwidget.cpp
+index 2cd941f..053c1f7 100644
+--- a/boardwidget.cpp
++++ b/boardwidget.cpp
+@@ -859,6 +859,8 @@ void BoardWidget::mousePressEvent(QMouseEvent *event)
+         return;
+     }
+ 
++    emit remainTilesCountChanged(0);
++
+     if (event->button() == Qt::LeftButton) {
+         if (TimerState == Demo) {
+             stopDemoMode();
+@@ -879,6 +881,10 @@ void BoardWidget::mousePressEvent(QMouseEvent *event)
+                 iTimerStep = 1;
+                 matchAnimationTimeout();
+                 cheatsUsed++;
++
++                const size_t count =
++                    GameDataNS::countMatchingTiles(*Game, MouseClickPos1);
++                emit remainTilesCountChanged(count);
+             }
+         } else {                             // second tile
+             transformPointToPosition(event->pos(), MouseClickPos2);
+diff --git a/boardwidget.h b/boardwidget.h
+index f5ce02a..40a29fb 100644
+--- a/boardwidget.h
++++ b/boardwidget.h
+@@ -252,6 +252,8 @@ signals:
+      * Signal Description */
+     void gameOver(unsigned short removed, unsigned short cheats);
+ 
++    void remainTilesCountChanged(const size_t count);
++
+ protected:
+     /**
+      * Overridden virtual method for wheel events. */
+diff --git a/kmahjongg.cpp b/kmahjongg.cpp
+index e4f5c49..8cd4ed8 100644
+--- a/kmahjongg.cpp
++++ b/kmahjongg.cpp
+@@ -114,6 +114,8 @@ KMahjongg::KMahjongg(QWidget *parent)
+     connect(bw, SIGNAL(gameOver(unsigned short,unsigned short)), this,
+         SLOT(gameOver(unsigned short,unsigned short)));
+     connect(bw, SIGNAL(gameCalculated()), this, SLOT(timerReset()));
++    connect(bw, SIGNAL(remainTilesCountChanged(const size_t)),
++                SLOT(setRemainTilesCountText(const size_t)));
+ 
+     startNewGame();
+ }
+@@ -188,6 +190,9 @@ void KMahjongg::setupStatusBar()
+     tilesLeftLabel = new QLabel(i18n("Removed: 0000/0000"), statusBar());
+     statusBar()->addWidget(tilesLeftLabel, 1);
+ 
++    remainTilesCountLabel = new QLabel(i18n("4/4 remains"), statusBar());
++    statusBar()->addWidget(remainTilesCountLabel);
++
+     QFrame *tileDivider = new QFrame(statusBar());
+     tileDivider->setFrameStyle(QFrame::VLine);
+     statusBar()->addWidget(tileDivider);
+@@ -426,6 +431,14 @@ void KMahjongg::showTileNumber(int iMaximum, int iCurrent, int iLeft)
+     }
+ }
+ 
++void KMahjongg::setRemainTilesCountText(const size_t count)
++{
++    QString str = count ? i18n("%1/4 remains", count)
++                        : i18n("");
++
++    remainTilesCountLabel->setText(str);
++}
++
+ void KMahjongg::demoModeChanged(bool bActive)
+ {
+     bDemoModeActive = bActive;
+diff --git a/kmahjongg.h b/kmahjongg.h
+index 3a101fc..4700723 100644
+--- a/kmahjongg.h
++++ b/kmahjongg.h
+@@ -77,6 +77,8 @@ public slots:
+      * @param iLeft */
+     void showTileNumber(int iMaximum, int iCurrent, int iLeft);
+ 
++    void setRemainTilesCountText(const size_t count);
++
+     /**
+      * Slot Description
+      *
+@@ -148,6 +150,7 @@ private:
+     QLabel *tilesLeftLabel;
+     QLabel *statusLabel;
+     QLabel *gameTimerLabel;
++    QLabel *remainTilesCountLabel;
+ 
+     QAction *undoAction;
+     QAction *redoAction;
+-- 
+2.0.0
+

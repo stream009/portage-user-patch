@@ -1,0 +1,24 @@
+From d7714abf6209410de934baa204cdd1a88f838191 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Thu, 4 Dec 2014 21:28:25 +0900
+Subject: [PATCH] Fix for bug 336936 (Main window become too tall)
+
+---
+ libs/kasten/gui/shell/shellwindow_p.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/libs/kasten/gui/shell/shellwindow_p.cpp b/libs/kasten/gui/shell/shellwindow_p.cpp
+index df0bf8e..9472a75 100644
+--- a/libs/kasten/gui/shell/shellwindow_p.cpp
++++ b/libs/kasten/gui/shell/shellwindow_p.cpp
+@@ -67,6 +67,7 @@ void ShellWindowPrivate::addTool( AbstractToolView* toolView )
+ 
+     ToolViewDockWidget* dockWidget = new ToolViewDockWidget( toolView, q );
+     // TODO: where to set the initial area?
++    dockWidget->setVisible(false);
+     q->addDockWidget( Qt::RightDockWidgetArea, dockWidget );
+ 
+     mTools.append( toolView->tool() );
+-- 
+2.2.0
+

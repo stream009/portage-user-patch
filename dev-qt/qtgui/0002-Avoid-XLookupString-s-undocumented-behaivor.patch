@@ -1,0 +1,70 @@
+From 970a666847e461fd2ef5d6f8e5b89ec0a58e5cf6 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Tue, 30 Sep 2014 16:47:24 +0900
+Subject: [PATCH] Avoid XLookupString's undocumented behaivor
+
+---
+ src/gui/kernel/qkeymapper_x11.cpp | 39 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+diff --git a/src/gui/kernel/qkeymapper_x11.cpp b/src/gui/kernel/qkeymapper_x11.cpp
+index 005ff3f..10b4ee2 100644
+--- a/src/gui/kernel/qkeymapper_x11.cpp
++++ b/src/gui/kernel/qkeymapper_x11.cpp
+@@ -1504,6 +1504,40 @@ static QString translateKeySym(KeySym keysym, uint xmodifiers,
+     return text;
+ }
+ 
++#ifndef QT_NO_XKB
++static int XLookupStringWithoutSpecialTreatmentForControlModifier(
++        XKeyEvent *event, char *buffer, int nbytes,
++                                        KeySym *keysym, XComposeStatus *)
++{
++    if ((event->state & ControlMask) == 0) {
++        return XLookupString(event, buffer, nbytes, keysym, 0);
++    } else {
++        KeySym dummy;
++        if (keysym == NULL) {
++            keysym = &dummy;
++        }
++
++        unsigned int new_mods;
++        Display *dpy = event->display;
++        if (!XkbLookupKeySym(
++                    dpy, event->keycode, event->state, &new_mods, keysym))
++        {
++            return 0;
++        }
++
++        // Use pre-consumed modifier for string lookups in order to obtain
++        // control character string.
++        int rtrnLen = XkbLookupKeyBinding(
++                            dpy, *keysym, event->state, buffer, nbytes, NULL);
++        if (rtrnLen > 0) {
++            return rtrnLen;
++        }
++
++        return XkbTranslateKeySym(dpy, keysym, event->state, buffer, nbytes, NULL);
++    }
++}
++#endif // QT_NO_XKB
++
+ extern bool qt_use_rtl_extensions; // from qapplication_x11.cpp
+ 
+ bool QKeyMapperPrivate::translateKeyEventInternal(QWidget *keyWidget,
+@@ -1548,7 +1582,12 @@ bool QKeyMapperPrivate::translateKeyEventInternal(QWidget *keyWidget,
+     QByteArray chars;
+     chars.resize(513);
+ 
++#ifdef QT_NO_XKB
+     count = XLookupString(&xkeyevent, chars.data(), chars.size(), &keysym, 0);
++#else
++    count = XLookupStringWithoutSpecialTreatmentForControlModifier(
++            &xkeyevent, chars.data(), chars.size(), &keysym, 0);
++#endif
+     if (count && !keycode) {
+         extern int qt_ximComposingKeycode; // from qapplication_x11.cpp
+         keycode = qt_ximComposingKeycode;
+-- 
+2.1.1
+

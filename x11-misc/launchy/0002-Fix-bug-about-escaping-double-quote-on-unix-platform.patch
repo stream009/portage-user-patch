@@ -1,0 +1,30 @@
+From c1af46d9e7e11f3302c67e6eaba9c60b4e50d70f Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sun, 25 May 2014 03:34:25 +0900
+Subject: [PATCH] Fix bug about escaping double-quote on unix platform.
+
+---
+ src/plugin_interface.cpp | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/plugin_interface.cpp b/src/plugin_interface.cpp
+index 82840d2..a19006c 100644
+--- a/src/plugin_interface.cpp
++++ b/src/plugin_interface.cpp
+@@ -209,8 +209,11 @@ void runProgram(QString path, QString args) {
+         /* special case for KDE since some apps start behind other windows */
+         cmd = "kstart --activate " + path.trimmed() + " " + args.trimmed();
+     } else /* gnome, xfce, etc */ {
+-        path.replace("\"", "\\\"");
+-        args.replace("\"", "\\\"");
++        // QProcess require triple double-quote for escaping double-quote.
++        // See parseCombinedArgString() in corelib/io/qprocess.cpp for detail.
++        path.replace("\"", "\"\"\"");
++        args.replace("\"", "\"\"\"");
++
+         cmd = "sh -c \"" + path.trimmed() + " " + args.trimmed() + "\"";
+      }
+ 
+-- 
+1.9.3
+

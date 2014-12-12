@@ -1,0 +1,50 @@
+From 8180f7563cbfe9df8559b8173c9d4f2f0e212157 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Thu, 3 Jul 2014 16:28:06 +0900
+Subject: [PATCH 2/2] Prevent iconified windows to go to end of window list
+
+---
+ openbox/client.c |  4 +---
+ openbox/focus.c  | 11 +----------
+ 2 files changed, 2 insertions(+), 13 deletions(-)
+
+diff --git a/openbox/client.c b/openbox/client.c
+index c97abd5..9c96d41 100644
+--- a/openbox/client.c
++++ b/openbox/client.c
+@@ -3410,9 +3410,7 @@ static void client_iconify_recursive(ObClient *self,
+             if (client_normal(self)) {
+                 self->iconic = iconic;
+ 
+-                /* update the focus lists.. iconic windows go to the bottom of
+-                   the list. this will also call focus_cycle_addremove(). */
+-                focus_order_to_bottom(self);
++                focus_order_to_top(self);
+ 
+                 changed = TRUE;
+             }
+diff --git a/openbox/focus.c b/openbox/focus.c
+index a4626bf..c78e97f 100644
+--- a/openbox/focus.c
++++ b/openbox/focus.c
+@@ -234,16 +234,7 @@ void focus_order_like_new(struct _ObClient *c)
+ void focus_order_to_top(ObClient *c)
+ {
+     focus_order = g_list_remove(focus_order, c);
+-    if (!c->iconic) {
+-        focus_order = g_list_prepend(focus_order, c);
+-    } else {
+-        GList *it;
+-
+-        /* insert before first iconic window */
+-        for (it = focus_order;
+-             it && !((ObClient*)it->data)->iconic; it = g_list_next(it));
+-        focus_order = g_list_insert_before(focus_order, it, c);
+-    }
++    focus_order = g_list_prepend(focus_order, c);
+ 
+     focus_cycle_reorder();
+ }
+-- 
+2.0.0
+

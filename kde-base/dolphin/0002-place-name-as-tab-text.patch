@@ -1,0 +1,67 @@
+From c6a9da77995513b3f89361a7a11193db1d69c0be Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sun, 5 Oct 2014 13:24:09 +0900
+Subject: [PATCH] Set place name to a tab text when current directory is
+ registered as a place.
+
+---
+ dolphin/src/dolphinmainwindow.cpp | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/dolphin/src/dolphinmainwindow.cpp b/dolphin/src/dolphinmainwindow.cpp
+index a4e43a9..8f841df 100644
+--- a/dolphin/src/dolphinmainwindow.cpp
++++ b/dolphin/src/dolphinmainwindow.cpp
+@@ -81,12 +81,15 @@
+ #include <KUrl>
+ #include <KUrlComboBox>
+ #include <KToolInvocation>
++#include <KFilePlacesModel>
+ 
+ #include <QDesktopWidget>
+ #include <QDBusMessage>
+ #include <QKeyEvent>
+ #include <QClipboard>
+ #include <QToolButton>
++#include <QModelIndex>
++
+ 
+ namespace {
+     // Used for GeneralSettings::version() to determine whether
+@@ -1766,8 +1769,33 @@ void DolphinMainWindow::updateSplitAction()
+     }
+ }
+ 
++static QString getPlaceName(const KUrl &url)
++{
++    // We can share this object with KUrlNavigator on DolphinViewContainer
++    // and save a little memory if we want.
++    static KFilePlacesModel placeModel;
++
++    for (int i = 0, cnt = placeModel.rowCount(); i < cnt; ++i) {
++        const QModelIndex &idx = placeModel.index(i, 0);
++        const KUrl placeUrl = placeModel.url(idx);
++
++        if (placeUrl.equals(url,
++                KUrl::CompareWithoutTrailingSlash | KUrl::AllowEmptyPath))
++        {
++            return placeModel.text(idx);
++        }
++    }
++
++    return QString();
++}
++
+ QString DolphinMainWindow::tabName(const KUrl& url) const
+ {
++    const QString placeName = getPlaceName(url);
++    if (!placeName.isEmpty()) {
++        return placeName;
++    }
++
+     QString name;
+     if (url.equals(KUrl("file:///"))) {
+         name = '/';
+-- 
+2.1.2
+

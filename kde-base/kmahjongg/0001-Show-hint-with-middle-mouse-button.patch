@@ -1,0 +1,25 @@
+From 0e87bb919895af2119b3baeeb24a343ee65020c7 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Fri, 4 Jul 2014 16:02:04 +0900
+Subject: [PATCH 1/2] Show hint with middle mouse button
+
+---
+ boardwidget.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/boardwidget.cpp b/boardwidget.cpp
+index a05b5ac..2cd941f 100644
+--- a/boardwidget.cpp
++++ b/boardwidget.cpp
+@@ -917,6 +917,8 @@ void BoardWidget::mousePressEvent(QMouseEvent *event)
+                 MouseClickPos2.e = Game->m_depth;
+             }
+         }
++    } else if (event->button() == Qt::MiddleButton) {
++        helpMove();
+     }
+ }
+ 
+-- 
+2.0.0
+

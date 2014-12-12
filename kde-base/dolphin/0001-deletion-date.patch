@@ -1,0 +1,241 @@
+From 9d70cdd6b79d9cbabc3b5337d6ef28588cbfed2a Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sat, 4 Oct 2014 16:02:45 +0900
+Subject: [PATCH] Add deletion date role to KFileItemModel and its view
+
+---
+ dolphin/src/kitemviews/kfileitemlistwidget.cpp |  2 +-
+ dolphin/src/kitemviews/kfileitemmodel.cpp      | 91 ++++++++++++++++++++------
+ dolphin/src/kitemviews/kfileitemmodel.h        |  9 ++-
+ 3 files changed, 79 insertions(+), 23 deletions(-)
+
+diff --git a/dolphin/src/kitemviews/kfileitemlistwidget.cpp b/dolphin/src/kitemviews/kfileitemlistwidget.cpp
+index fe8c7e9..2112a9f 100644
+--- a/dolphin/src/kitemviews/kfileitemlistwidget.cpp
++++ b/dolphin/src/kitemviews/kfileitemlistwidget.cpp
+@@ -80,7 +80,7 @@ QString KFileItemListWidgetInformant::roleText(const QByteArray& role,
+             const KIO::filesize_t size = roleValue.value<KIO::filesize_t>();
+             text = KGlobal::locale()->formatByteSize(size);
+         }
+-    } else if (role == "date") {
++    } else if (role == "date" || role == "deletionDate") {
+         const QDateTime dateTime = roleValue.toDateTime();
+         text = KGlobal::locale()->formatDateTime(dateTime);
+     } else {
+diff --git a/dolphin/src/kitemviews/kfileitemmodel.cpp b/dolphin/src/kitemviews/kfileitemmodel.cpp
+index 72acf77..2ec47b8 100644
+--- a/dolphin/src/kitemviews/kfileitemmodel.cpp
++++ b/dolphin/src/kitemviews/kfileitemmodel.cpp
+@@ -326,13 +326,16 @@ QList<QPair<int, QVariant> > KFileItemModel::groups() const
+         QElapsedTimer timer;
+         timer.start();
+ #endif
+-        switch (typeForRole(sortRole())) {
++        const QByteArray &role = sortRole();
++        const RoleType roleType = typeForRole(role);
++        switch (roleType) {
+         case NameRole:        m_groups = nameRoleGroups(); break;
+         case SizeRole:        m_groups = sizeRoleGroups(); break;
+-        case DateRole:        m_groups = dateRoleGroups(); break;
++        case DeletionDateRole:
++        case DateRole:        m_groups = dateRoleGroups(roleType); break;
+         case PermissionsRole: m_groups = permissionRoleGroups(); break;
+         case RatingRole:      m_groups = ratingRoleGroups(); break;
+-        default:              m_groups = genericStringRoleGroups(sortRole()); break;
++        default:              m_groups = genericStringRoleGroups(role); break;
+         }
+ 
+ #ifdef KFILEITEMMODEL_DEBUG
+@@ -1293,6 +1296,7 @@ void KFileItemModel::prepareItemsForSorting(QList<ItemData*>& itemDataList)
+     case GroupRole:
+     case DestinationRole:
+     case PathRole:
++    case DeletionDateRole:
+         // These roles can be determined with retrieveData, and they have to be stored
+         // in the QHash "values" for the sorting.
+         foreach (ItemData* itemData, itemDataList) {
+@@ -1557,6 +1561,18 @@ QHash<QByteArray, QVariant> KFileItemModel::retrieveData(const KFileItem& item,
+         data.insert(sharedValue("path"), path);
+     }
+ 
++    if (m_requestRole[DeletionDateRole] &&
++                        item.url().protocol() == QLatin1String("trash"))
++    {
++        QDateTime dateTime = QDateTime::fromString(
++            item.entry().stringValue(KIO::UDSEntry::UDS_EXTRA + 1),
++            Qt::ISODate
++        );
++        if (dateTime.isValid()) {
++            data.insert(sharedValue("deletionDate"), dateTime);
++        }
++    }
++
+     if (m_requestRole[IsExpandableRole] && isDir) {
+         data.insert(sharedValue("isExpandable"), true);
+     }
+@@ -1739,6 +1755,24 @@ int KFileItemModel::sortRoleCompare(const ItemData* a, const ItemData* b) const
+         break;
+     }
+ 
++    case DeletionDateRole: {
++        Q_ASSERT(a->values.find("deletionDate") != a->values.end());
++        Q_ASSERT(b->values.find("deletionDate") != a->values.end());
++        const QDateTime dateTimeA =
++                                a->values.value("deletionDate").toDateTime();
++        const QDateTime dateTimeB =
++                                b->values.value("deletionDate").toDateTime();
++        Q_ASSERT(dataTimeA.isValid());
++        Q_ASSERT(dataTimeB.isValid());
++
++        if (dateTimeA < dateTimeB) {
++            result = -1;
++        } else if (dateTimeA > dateTimeB) {
++            result = +1;
++        }
++        break;
++    }
++
+     default: {
+         const QByteArray role = roleForType(m_sortRole);
+         result = QString::compare(a->values.value(role).toString(),
+@@ -1901,7 +1935,22 @@ QList<QPair<int, QVariant> > KFileItemModel::sizeRoleGroups() const
+     return groups;
+ }
+ 
+-QList<QPair<int, QVariant> > KFileItemModel::dateRoleGroups() const
++KDateTime KFileItemModel::groupingDateTime(const ItemData *item,
++                                           const RoleType roleType) const
++{
++    switch (roleType) {
++    case DateRole:
++        return item->item.time(KFileItem::ModificationTime);
++    case DeletionDateRole:
++        return KDateTime(item->values.value("deletionDate").toDateTime());
++    default:
++        kWarning() << "Unknown role type:" << roleType;
++        return KDateTime();
++    }
++    Q_ASSERT(false && "never reach here");
++}
++
++QList<QPair<int, QVariant> > KFileItemModel::dateRoleGroups(const RoleType roleType) const
+ {
+     Q_ASSERT(!m_itemData.isEmpty());
+ 
+@@ -1910,31 +1959,32 @@ QList<QPair<int, QVariant> > KFileItemModel::dateRoleGroups() const
+ 
+     const QDate currentDate = KDateTime::currentLocalDateTime().date();
+ 
+-    QDate previousModifiedDate;
++    QDate previousItemDate;
+     QString groupValue;
+     for (int i = 0; i <= maxIndex; ++i) {
+         if (isChildItem(i)) {
+             continue;
+         }
+ 
+-        const KDateTime modifiedTime = m_itemData.at(i)->item.time(KFileItem::ModificationTime);
+-        const QDate modifiedDate = modifiedTime.date();
+-        if (modifiedDate == previousModifiedDate) {
++        const KDateTime itemDateTime =
++                                groupingDateTime(m_itemData.at(i), roleType);
++        const QDate itemDate = itemDateTime.date();
++        if (itemDate == previousItemDate) {
+             // The current item is in the same group as the previous item
+             continue;
+         }
+-        previousModifiedDate = modifiedDate;
++        previousItemDate = itemDate;
+ 
+-        const int daysDistance = modifiedDate.daysTo(currentDate);
++        const int daysDistance = itemDate.daysTo(currentDate);
+ 
+         QString newGroupValue;
+-        if (currentDate.year() == modifiedDate.year() && currentDate.month() == modifiedDate.month()) {
++        if (currentDate.year() == itemDate.year() && currentDate.month() == itemDate.month()) {
+             switch (daysDistance / 7) {
+             case 0:
+                 switch (daysDistance) {
+                 case 0:  newGroupValue = i18nc("@title:group Date", "Today"); break;
+                 case 1:  newGroupValue = i18nc("@title:group Date", "Yesterday"); break;
+-                default: newGroupValue = modifiedTime.toString(i18nc("@title:group The week day name: %A", "%A"));
++                default: newGroupValue = itemDateTime.toString(i18nc("@title:group The week day name: %A", "%A"));
+                 }
+                 break;
+             case 1:
+@@ -1955,22 +2005,22 @@ QList<QPair<int, QVariant> > KFileItemModel::dateRoleGroups() const
+             }
+         } else {
+             const QDate lastMonthDate = currentDate.addMonths(-1);
+-            if  (lastMonthDate.year() == modifiedDate.year() && lastMonthDate.month() == modifiedDate.month()) {
++            if  (lastMonthDate.year() == itemDate.year() && lastMonthDate.month() == itemDate.month()) {
+                 if (daysDistance == 1) {
+-                    newGroupValue = modifiedTime.toString(i18nc("@title:group Date: %B is full month name in current locale, and %Y is full year number", "Yesterday (%B, %Y)"));
++                    newGroupValue = itemDateTime.toString(i18nc("@title:group Date: %B is full month name in current locale, and %Y is full year number", "Yesterday (%B, %Y)"));
+                 } else if (daysDistance <= 7) {
+-                    newGroupValue = modifiedTime.toString(i18nc("@title:group The week day name: %A, %B is full month name in current locale, and %Y is full year number", "%A (%B, %Y)"));
++                    newGroupValue = itemDateTime.toString(i18nc("@title:group The week day name: %A, %B is full month name in current locale, and %Y is full year number", "%A (%B, %Y)"));
+                 } else if (daysDistance <= 7 * 2) {
+-                    newGroupValue = modifiedTime.toString(i18nc("@title:group Date: %B is full month name in current locale, and %Y is full year number", "One Week Ago (%B, %Y)"));
++                    newGroupValue = itemDateTime.toString(i18nc("@title:group Date: %B is full month name in current locale, and %Y is full year number", "One Week Ago (%B, %Y)"));
+                 } else if (daysDistance <= 7 * 3) {
+-                    newGroupValue = modifiedTime.toString(i18nc("@title:group Date: %B is full month name in current locale, and %Y is full year number", "Two Weeks Ago (%B, %Y)"));
++                    newGroupValue = itemDateTime.toString(i18nc("@title:group Date: %B is full month name in current locale, and %Y is full year number", "Two Weeks Ago (%B, %Y)"));
+                 } else if (daysDistance <= 7 * 4) {
+-                    newGroupValue = modifiedTime.toString(i18nc("@title:group Date: %B is full month name in current locale, and %Y is full year number", "Three Weeks Ago (%B, %Y)"));
++                    newGroupValue = itemDateTime.toString(i18nc("@title:group Date: %B is full month name in current locale, and %Y is full year number", "Three Weeks Ago (%B, %Y)"));
+                 } else {
+-                    newGroupValue = modifiedTime.toString(i18nc("@title:group Date: %B is full month name in current locale, and %Y is full year number", "Earlier on %B, %Y"));
++                    newGroupValue = itemDateTime.toString(i18nc("@title:group Date: %B is full month name in current locale, and %Y is full year number", "Earlier on %B, %Y"));
+                 }
+             } else {
+-                newGroupValue = modifiedTime.toString(i18nc("@title:group The month and year: %B is full month name in current locale, and %Y is full year number", "%B, %Y"));
++                newGroupValue = itemDateTime.toString(i18nc("@title:group The month and year: %B is full month name in current locale, and %Y is full year number", "%B, %Y"));
+             }
+         }
+ 
+@@ -2155,6 +2205,7 @@ const KFileItemModel::RoleInfoMap* KFileItemModel::rolesInfoMap(int& count)
+         { "permissions", PermissionsRole, I18N_NOOP2_NOSTRIP("@label", "Permissions"),      I18N_NOOP2_NOSTRIP("@label", "Other"),    false, false },
+         { "owner",       OwnerRole,       I18N_NOOP2_NOSTRIP("@label", "Owner"),            I18N_NOOP2_NOSTRIP("@label", "Other"),    false, false },
+         { "group",       GroupRole,       I18N_NOOP2_NOSTRIP("@label", "User Group"),       I18N_NOOP2_NOSTRIP("@label", "Other"),    false, false },
++        { "deletionDate", DeletionDateRole, I18N_NOOP2_NOSTRIP("@label", "Deletion Date"),  I18N_NOOP2_NOSTRIP("@label", "Other"),    false, false },
+     };
+ 
+     count = sizeof(rolesInfoMap) / sizeof(RoleInfoMap);
+diff --git a/dolphin/src/kitemviews/kfileitemmodel.h b/dolphin/src/kitemviews/kfileitemmodel.h
+index 62a283d..3bc1d6e 100644
+--- a/dolphin/src/kitemviews/kfileitemmodel.h
++++ b/dolphin/src/kitemviews/kfileitemmodel.h
+@@ -285,7 +285,7 @@ private:
+     enum RoleType {
+         // User visible roles:
+         NoRole, NameRole, SizeRole, DateRole, PermissionsRole, OwnerRole,
+-        GroupRole, TypeRole, DestinationRole, PathRole,
++        GroupRole, TypeRole, DestinationRole, PathRole, DeletionDateRole,
+         // User visible roles available with Baloo:
+         CommentRole, TagsRole, RatingRole, ImageSizeRole, OrientationRole,
+         WordCountRole, LineCountRole, ArtistRole, AlbumRole, DurationRole, TrackRole,
+@@ -387,7 +387,7 @@ private:
+ 
+     QList<QPair<int, QVariant> > nameRoleGroups() const;
+     QList<QPair<int, QVariant> > sizeRoleGroups() const;
+-    QList<QPair<int, QVariant> > dateRoleGroups() const;
++    QList<QPair<int, QVariant> > dateRoleGroups(const RoleType) const;
+     QList<QPair<int, QVariant> > permissionRoleGroups() const;
+     QList<QPair<int, QVariant> > ratingRoleGroups() const;
+     QList<QPair<int, QVariant> > genericStringRoleGroups(const QByteArray& typeForRole) const;
+@@ -457,6 +457,11 @@ private:
+      */
+     bool isConsistent() const;
+ 
++    /**
++     * @return specified item's datetime object for given role type.
++     */
++    KDateTime groupingDateTime(const ItemData *, const RoleType) const;
++
+ private:
+     KFileItemModelDirLister* m_dirLister;
+ 
+-- 
+2.1.2
+

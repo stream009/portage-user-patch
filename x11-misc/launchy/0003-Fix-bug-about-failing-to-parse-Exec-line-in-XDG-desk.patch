@@ -1,0 +1,26 @@
+From 9f8ed3d2c40d088718501eefe752c71327661b07 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sun, 25 May 2014 03:45:03 +0900
+Subject: [PATCH] Fix bug about failing to parse Exec line in XDG desktop entry
+ when the value contains "=".
+
+---
+ platforms/unix/platform_unix.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/platforms/unix/platform_unix.cpp b/platforms/unix/platform_unix.cpp
+index 1684325..c383b96 100644
+--- a/platforms/unix/platform_unix.cpp
++++ b/platforms/unix/platform_unix.cpp
+@@ -170,7 +170,7 @@ void PlatformUnix::alterItem(CatItem* item) {
+ 	else if (line.startsWith("Icon", Qt::CaseInsensitive))
+ 	    icon = line.split("=")[1].trimmed();
+ 	else if (line.startsWith("Exec", Qt::CaseInsensitive))
+-	    exe = line.split("=")[1].trimmed();	
++	    exe = line.section("=", 1).trimmed();
+     }
+     if (name.size() >= item->shortName.size() - 8) {
+ 	item->shortName = name;
+-- 
+1.9.3
+

@@ -1,0 +1,88 @@
+From b63c1781130d2a55e17761518adf7dc3e0595120 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sat, 24 May 2014 21:06:59 +0900
+Subject: [PATCH] Support user specific data directory of XDG specification.
+ http://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html
+
+---
+ platforms/unix/platform_unix_util.cpp | 34 +++++++++++++++++++++++++++++++++-
+ platforms/unix/platform_unix_util.h   |  1 +
+ 2 files changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/platforms/unix/platform_unix_util.cpp b/platforms/unix/platform_unix_util.cpp
+index ab8d91f..b55160f 100644
+--- a/platforms/unix/platform_unix_util.cpp
++++ b/platforms/unix/platform_unix_util.cpp
+@@ -1,13 +1,20 @@
+ #include "platform_unix_util.h"
+ 
+ 
++#include <cstdlib>
+ #include <QPixmap>
+ #include <QIcon>
+ #include <QDebug>
+ #include <QPainter>
+ #include <QProcess>
+ 
+-UnixIconProvider::UnixIconProvider() {
++namespace {
++    QString getXdgDataHome();
++}
++
++UnixIconProvider::UnixIconProvider()
++    : xdgDataHome(getXdgDataHome())
++{
+     foreach(QString line, QProcess::systemEnvironment()) {
+ 	if (!line.startsWith("XDG_DATA_DIRS", Qt::CaseInsensitive))
+ 	    continue;
+@@ -145,6 +152,10 @@ QString UnixIconProvider::getDesktopIcon(QString desktopFile, QString IconName)
+ 	QStringList dirs;	
+ 	dirs += QDir::homePath() + "/.icons" + themes[0];
+ 
++        foreach(QString thm, themes) {
++            dirs += xdgDataHome + "/icons" + thm;
++        }
++
+ 	foreach(QString dir, xdgDataDirs) {
+ 	    foreach(QString thm, themes) {
+ 		dirs += dir + "/icons" + thm;
+@@ -179,3 +190,24 @@ QString UnixIconProvider::getDesktopIcon(QString desktopFile, QString IconName)
+ 
+     return iconPath;
+ }
++
++namespace {
++
++QString getXdgDataHome()
++{
++    QString result;
++
++    const char *env = getenv("XDG_DATA_HOME");
++
++    if (env) {
++        result = env;
++    } else {
++        const char *home = getenv("HOME");
++        if (home) result += home;
++        result += "/.local/share";
++    }
++
++    return result;
++}
++
++}
+diff --git a/platforms/unix/platform_unix_util.h b/platforms/unix/platform_unix_util.h
+index 56498e4..98f1cbb 100644
+--- a/platforms/unix/platform_unix_util.h
++++ b/platforms/unix/platform_unix_util.h
+@@ -15,6 +15,7 @@ class UnixIconProvider : public QFileIconProvider
+     QHash<QString, QString> desktop2icon;
+     QHash<QString, QString> icon2path;
+     QStringList xdgDataDirs;
++    const QString xdgDataHome;
+  public:
+     UnixIconProvider();
+     ~UnixIconProvider() {}
+-- 
+1.9.3
+

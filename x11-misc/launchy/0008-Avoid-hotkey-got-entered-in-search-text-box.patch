@@ -1,0 +1,30 @@
+From d956832ab720da8cfda7d1bf613851fa9e932056 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Fri, 30 May 2014 20:42:23 +0900
+Subject: [PATCH 3/3] Avoid hotkey got entered in search text box.
+
+---
+ src/main.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index 4e3cd5b..1fc43b9 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -645,6 +645,13 @@ void LaunchyWidget::alternativesKeyPressEvent(QKeyEvent* event)
+ 
+ void LaunchyWidget::keyPressEvent(QKeyEvent* event)
+ {
++#ifdef Q_WS_X11
++    // ignore hotkey
++    if (event->modifiers() + event->key() == getHotkey()) {
++        return;
++    }
++#endif
++
+ 	if (event->key() == Qt::Key_Escape)
+ 	{
+ 		if (alternatives->isVisible())
+-- 
+2.0.0
+

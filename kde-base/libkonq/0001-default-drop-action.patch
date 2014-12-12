@@ -1,0 +1,211 @@
+From 9394bc3ff12c143c921c8750094ead3a69fc183f Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sun, 19 Oct 2014 21:16:51 +0900
+Subject: [PATCH] default drop action another approach
+
+---
+ lib/konq/konq_operations.cpp | 147 +++++++++++++++++++++++++------------------
+ lib/konq/konq_operations.h   |   2 +
+ 2 files changed, 87 insertions(+), 62 deletions(-)
+
+diff --git a/lib/konq/konq_operations.cpp b/lib/konq/konq_operations.cpp
+index 220a90a..b3471d3 100644
+--- a/lib/konq/konq_operations.cpp
++++ b/lib/konq/konq_operations.cpp
+@@ -511,8 +511,7 @@ void KonqOperations::doDropFileCopy()
+     }
+     else if ( (
+         ((m_info->keyboardModifiers & Qt::ControlModifier) == 0) &&
+-        ((m_info->keyboardModifiers & Qt::ShiftModifier) == 0) &&
+-        ((m_info->keyboardModifiers & Qt::AltModifier) == 0) ) || linkOnly )
++        ((m_info->keyboardModifiers & Qt::ShiftModifier) == 0) ) || linkOnly )
+     {
+         // Neither control, shift or alt are pressed => show popup menu
+ 
+@@ -563,23 +562,7 @@ void KonqOperations::doDropFileCopy()
+             enableLinking = false;
+         }
+ 
+-        QMenu popup;
+-        QString seq = QKeySequence( Qt::ShiftModifier ).toString();
+-        seq.chop(1); // chop superfluous '+'
+-        QAction* popupMoveAction = new QAction(i18n( "&Move Here" ) + '\t' + seq, this);
+-        popupMoveAction->setIcon(KIcon("go-jump"));
+-        seq = QKeySequence( Qt::ControlModifier ).toString();
+-        seq.chop(1);
+-        QAction* popupCopyAction = new QAction(i18n( "&Copy Here" ) + '\t' + seq, this);
+-        popupCopyAction->setIcon(KIcon("edit-copy"));
+-        seq = QKeySequence( Qt::ControlModifier + Qt::ShiftModifier ).toString();
+-        seq.chop(1);
+-        QAction* popupLinkAction = new QAction(i18n( "&Link Here" ) + '\t' + seq, this);
+-        popupLinkAction->setIcon(KIcon("edit-link"));
+-        QAction* popupWallAction = new QAction( i18n( "Set as &Wallpaper" ), this );
+-        popupWallAction->setIcon(KIcon("preferences-desktop-wallpaper"));
+-        QAction* popupCancelAction = new QAction(i18n( "C&ancel" ) + '\t' + QKeySequence( Qt::Key_Escape ).toString(), this);
+-        popupCancelAction->setIcon(KIcon("process-stop"));
++        Qt::DropActions allowedActions = 0;
+ 
+         if (!mlst.isEmpty() && (sMoving || (sReading && sDeleting)) && !linkOnly )
+         {
+@@ -594,55 +577,27 @@ void KonqOperations::doDropFileCopy()
+                 }
+             }
+ 
+-            if ( !equalDestination )
+-                popup.addAction(popupMoveAction);
++            if ( !equalDestination ) {
++                allowedActions |= Qt::MoveAction;
++            }
+         }
+ 
+-        if ( sReading && !linkOnly)
+-            popup.addAction(popupCopyAction);
+-
+-        if ( enableLinking )
+-            popup.addAction(popupLinkAction);
+-
+-#if 0
+-        if (bSetWallpaper)
+-            popup.addAction(popupWallAction);
+-#endif
+-
+-        //now initialize the drop plugins
+-        KFileItemList fileItems;
+-        foreach(const KUrl& url, lst) {
+-            fileItems.append(KFileItem(
+-                        KFileItem::Unknown,
+-                        KFileItem::Unknown,
+-                        url));
+-
++        if ( sReading && !linkOnly) {
++            allowedActions |= Qt::CopyAction;
+         }
+ 
+-        QList<QAction*> pluginActions;
+-        KFileItemListProperties info(fileItems);
+-        _addPluginActions(pluginActions, m_destUrl, info);
+-
+-        if (!m_info->userActions.isEmpty() || !pluginActions.isEmpty()) {
+-            popup.addSeparator();
+-            popup.addActions(m_info->userActions);
+-            popup.addActions(pluginActions);
++        if ( enableLinking ) {
++            allowedActions |= Qt::LinkAction;
+         }
+ 
+-        popup.addSeparator();
+-        popup.addAction(popupCancelAction);
+-
+-        QAction* result = popup.exec( m_info->mousePos );
+-
+-        if(result == popupCopyAction)
+-            action = Qt::CopyAction;
+-        else if(result == popupMoveAction)
+-            action = Qt::MoveAction;
+-        else if(result == popupLinkAction)
+-            action = Qt::LinkAction;
+-        else {
+-            deleteLater();
+-            return;
++        if ( !( allowedActions & action ) ||
++             m_info->keyboardModifiers & Qt::AltModifier)
++        {
++            action = askDropAction( allowedActions );
++            if (action == Qt::IgnoreAction) {
++                deleteLater();
++                return;
++            }
+         }
+     }
+ 
+@@ -681,6 +636,74 @@ void KonqOperations::doDropFileCopy()
+     deleteLater();
+ }
+ 
++Qt::DropAction KonqOperations::askDropAction(
++                                const Qt::DropActions &allowedActions)
++{
++    QMenu popup;
++    QString seq = QKeySequence( Qt::ShiftModifier ).toString();
++    seq.chop(1); // chop superfluous '+'
++    QAction* popupMoveAction = new QAction(i18n( "&Move Here" ) + '\t' + seq, this);
++    popupMoveAction->setIcon(KIcon("go-jump"));
++
++    seq = QKeySequence( Qt::ControlModifier ).toString();
++    seq.chop(1);
++    QAction* popupCopyAction = new QAction(i18n( "&Copy Here" ) + '\t' + seq, this);
++    popupCopyAction->setIcon(KIcon("edit-copy"));
++
++    seq = QKeySequence( Qt::ControlModifier + Qt::ShiftModifier ).toString();
++    seq.chop(1);
++    QAction* popupLinkAction = new QAction(i18n( "&Link Here" ) + '\t' + seq, this);
++    popupLinkAction->setIcon(KIcon("edit-link"));
++
++    QAction* popupCancelAction = new QAction(i18n( "C&ancel" ) + '\t' + QKeySequence( Qt::Key_Escape ).toString(), this);
++    popupCancelAction->setIcon(KIcon("process-stop"));
++
++    if (allowedActions & Qt::MoveAction) {
++        popup.addAction(popupMoveAction);
++    }
++    if (allowedActions & Qt::CopyAction) {
++        popup.addAction(popupCopyAction);
++    }
++    if (allowedActions & Qt::LinkAction) {
++        popup.addAction(popupLinkAction);
++    }
++
++    //now initialize the drop plugins
++    KFileItemList fileItems;
++    foreach(const KUrl& url, m_info->urls) {
++        fileItems.append(KFileItem(
++                    KFileItem::Unknown,
++                    KFileItem::Unknown,
++                    url));
++
++    }
++
++    QList<QAction*> pluginActions;
++    KFileItemListProperties info(fileItems);
++    _addPluginActions(pluginActions, m_destUrl, info);
++
++    if (!m_info->userActions.isEmpty() || !pluginActions.isEmpty()) {
++        popup.addSeparator();
++        popup.addActions(m_info->userActions);
++        popup.addActions(pluginActions);
++    }
++
++    popup.addSeparator();
++    popup.addAction(popupCancelAction);
++
++    QAction* result = popup.exec( m_info->mousePos );
++
++    if(result == popupCopyAction)
++        return Qt::CopyAction;
++    else if(result == popupMoveAction)
++        return Qt::MoveAction;
++    else if(result == popupLinkAction)
++        return Qt::LinkAction;
++    else {
++        return Qt::IgnoreAction;
++    }
++}
++
+ void KonqOperations::slotCopyingDone( KIO::Job*, const KUrl&, const KUrl &to)
+ {
+     m_createdUrls << to;
+diff --git a/lib/konq/konq_operations.h b/lib/konq/konq_operations.h
+index e9255c4..e416f09 100644
+--- a/lib/konq/konq_operations.h
++++ b/lib/konq/konq_operations.h
+@@ -269,6 +269,8 @@ private:
+     // internal, for COPY/MOVE/LINK/MKDIR
+     void setOperation( KIO::Job * job, Operation method, const KUrl & dest );
+ 
++    Qt::DropAction askDropAction(const Qt::DropActions &);
++
+     struct DropInfo
+     {
+         DropInfo( Qt::KeyboardModifiers k, const KUrl::List & u, const QMap<QString,QString> &m,
+-- 
+2.1.3
+

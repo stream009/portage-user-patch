@@ -1,0 +1,31 @@
+diff --git a/usr/src/nv/conftest.sh b/usr/src/nv/conftest.sh
+index a93efad..8af5bef 100644
+--- a/usr/src/nv/conftest.sh
++++ b/usr/src/nv/conftest.sh
+@@ -944,7 +944,7 @@ compile_test() {
+             # and how many arguments it takes.
+             #
+             echo "$CONFTEST_PREAMBLE
+-            #include <acpi/acpi.h>
++            #include <linux/acpi.h>
+             void conftest_acpi_walk_namespace(void) {
+                 acpi_walk_namespace();
+             }" > conftest$$.c
+@@ -959,7 +959,7 @@ compile_test() {
+             fi
+ 
+             echo "$CONFTEST_PREAMBLE
+-            #include <acpi/acpi.h>
++            #include <linux/acpi.h>
+             void conftest_acpi_walk_namespace(void) {
+                 acpi_walk_namespace(0, NULL, 0, NULL, NULL, NULL, NULL);
+             }" > conftest$$.c
+@@ -975,7 +975,7 @@ compile_test() {
+             fi
+ 
+             echo "$CONFTEST_PREAMBLE
+-            #include <acpi/acpi.h>
++            #include <linux/acpi.h>
+             void conftest_acpi_walk_namespace(void) {
+                 acpi_walk_namespace(0, NULL, 0, NULL, NULL, NULL);
+             }" > conftest$$.c

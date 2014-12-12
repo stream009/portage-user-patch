@@ -1,0 +1,27 @@
+From 34e1b4456f5b5e2b528d219b259981c394433aa2 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sun, 25 May 2014 03:17:05 +0900
+Subject: [PATCH] Unescape backslash in XDG string for unix platform.
+
+---
+ src/plugin_interface.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/plugin_interface.cpp b/src/plugin_interface.cpp
+index e835f24..82840d2 100644
+--- a/src/plugin_interface.cpp
++++ b/src/plugin_interface.cpp
+@@ -196,6 +196,10 @@ void runProgram(QString path, QString args) {
+         args = "";
+    }
+ 
++    // un-escape backslash in XDG string.  TODO \s \n \t \r
++    // http://standards.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html#value-types
++    path.replace("\\\\", "\\");
++
+     QString cmd;
+ 
+     if( !info.isExecutable() || info.isDir() ){
+-- 
+1.9.3
+

@@ -1,0 +1,26 @@
+From 51c280140f42e087d0b2d2bf742d32fdaebbfef0 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Fri, 30 May 2014 20:39:48 +0900
+Subject: [PATCH 2/3] Avoid launchy window to stuck disappeared.
+
+---
+ src/main.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index eb7be50..4e3cd5b 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -492,7 +492,8 @@ void LaunchyWidget::focusOutEvent(QFocusEvent* event)
+ 	if (event->reason() == Qt::ActiveWindowFocusReason)
+ 	{
+ 		if (gSettings->value("GenOps/hideiflostfocus", false).toBool() &&
+-			!isActiveWindow() && !alternatives->isActiveWindow() && !optionsOpen)
++			!isActiveWindow() && !alternatives->isActiveWindow() &&
++            !optionsOpen && !isHidden())
+ 		{
+ 			hideLaunchy();
+ 		}
+-- 
+2.0.0
+

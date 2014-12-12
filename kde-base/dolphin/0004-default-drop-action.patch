@@ -1,0 +1,25 @@
+From 9394bc3ff12c143c921c8750094ead3a69fc183f Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sun, 19 Oct 2014 21:16:51 +0900
+Subject: [PATCH] default drop action another approach
+
+---
+ dolphin/src/kitemviews/kitemlistcontroller.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dolphin/src/kitemviews/kitemlistcontroller.cpp b/dolphin/src/kitemviews/kitemlistcontroller.cpp
+index 8e2ef5e..963e188 100644
+--- a/dolphin/src/kitemviews/kitemlistcontroller.cpp
++++ b/dolphin/src/kitemviews/kitemlistcontroller.cpp
+@@ -1173,7 +1173,7 @@ void KItemListController::startDragging()
+     const QPoint hotSpot(pixmap.width() / 2, 0);
+     drag->setHotSpot(hotSpot);
+ 
+-    drag->exec(Qt::MoveAction | Qt::CopyAction | Qt::LinkAction, Qt::CopyAction);
++    drag->exec(Qt::MoveAction | Qt::CopyAction);
+     QAccessible::updateAccessibility(view(), 0, QAccessible::DragDropStart);
+ }
+ 
+-- 
+2.1.3
+
