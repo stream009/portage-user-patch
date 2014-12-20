@@ -1,0 +1,899 @@
+From aed9f8a5329c0e604d33ec7abae93937f1ac0a4e Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sat, 20 Dec 2014 17:43:39 +0900
+Subject: [PATCH] Squashed commit of the following:
+
+commit cc6c8c42cc6c345d2c64df2cf0ef9ceb38b3f619
+Author: stream <stream009@gmail.com>
+Date:   Sat Dec 20 04:18:24 2014 +0900
+
+    Add TransferLogDialog
+
+commit 480d6540fa111198b26878ce4bf2e6b98b785abb
+Author: stream <stream009@gmail.com>
+Date:   Sat Dec 20 04:10:41 2014 +0900
+
+    Add LoggingFactory
+
+commit e357ca6839efa90632811d2aee02ff43192dced0
+Author: stream <stream009@gmail.com>
+Date:   Thu Dec 18 00:20:27 2014 +0900
+
+    Factor out Logging from Transfer
+---
+ CMakeLists.txt                                     |   3 +
+ conf/kget.kcfg                                     |   3 +
+ core/datasourcefactory.cpp                         |   2 +-
+ core/datasourcefactory.h                           |   3 +-
+ core/logging.cpp                                   |  31 ++++++
+ core/logging.h                                     |  62 ++++++++++++
+ core/transfer.cpp                                  |  16 ----
+ core/transfer.h                                    |  19 ----
+ core/transferdatasource.h                          |   5 +-
+ mainwindow.cpp                                     |  22 +++++
+ mainwindow.h                                       |   1 +
+ transfer-plugins/kio/transferKio.cpp               |   4 +-
+ transfer-plugins/kio/transferKio.h                 |   5 +-
+ transfer-plugins/metalink/metalink.cpp             |   4 +-
+ transfer-plugins/metalink/metalinkhttp.cpp         |   5 +-
+ transfer-plugins/metalink/metalinkxml.cpp          |   4 +-
+ .../multisegmentkio/multisegkiodatasource.cpp      |   4 +-
+ .../multisegmentkio/multisegkiodatasource.h        |   3 +-
+ transfer-plugins/multisegmentkio/segment.cpp       |   6 +-
+ transfer-plugins/multisegmentkio/segment.h         |   3 +-
+ .../multisegmentkio/transfermultisegkio.cpp        |   7 +-
+ .../multisegmentkio/transfermultisegkio.h          |   4 +-
+ ui/contextmenu.cpp                                 |   4 +
+ ui/transferlogdialog.cpp                           | 106 +++++++++++++++++++++
+ ui/transferlogdialog.h                             |  48 ++++++++++
+ ui/transferlogdialog.ui                            |  37 +++++++
+ 26 files changed, 353 insertions(+), 58 deletions(-)
+ create mode 100644 core/logging.cpp
+ create mode 100644 core/logging.h
+ create mode 100644 ui/transferlogdialog.cpp
+ create mode 100644 ui/transferlogdialog.h
+ create mode 100644 ui/transferlogdialog.ui
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3f77f59..769829f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -167,6 +167,7 @@ set(kgetcore_SRCS
+    core/basedialog.cpp
+    core/mostlocalurl.cpp
+    core/filedeleter.cpp
++   core/logging.cpp
+ )
+ 
+ if(HAVE_NEPOMUK)
+@@ -259,6 +260,7 @@ set(kget_SRCS ${kget_adaptor_SRCS} ${kget_transfer_adaptor_SRCS}
+    ui/metalinkcreator/urlwidget.cpp
+    ui/metalinkcreator/filehandler.cpp
+    ui/signaturedlg.cpp
++   ui/transferlogdialog.cpp
+    mainwindow.cpp
+    main.cpp
+ 
+@@ -294,6 +296,7 @@ kde4_add_ui_files(kget_SRCS
+    ui/metalinkcreator/urlwidget.ui
+    ui/metalinkcreator/commondata.ui
+    ui/signaturedlg.ui
++   ui/transferlogdialog.ui
+ )
+ 
+ kde4_add_app_icon(kget_SRCS "ui/icons/hi*-apps-kget.png")
+diff --git a/conf/kget.kcfg b/conf/kget.kcfg
+index a50d8f9..dcaaff3 100644
+--- a/conf/kget.kcfg
++++ b/conf/kget.kcfg
+@@ -177,6 +177,9 @@
+     <entry name="HistoryColumnWidths" type="IntList">
+       <label>The width of the columns in the history view</label>
+     </entry>
++    <entry name="LogColumnWidths" type="IntList">
++      <label>The width of the columns in the transfer log view</label>
++    </entry>
+   </group>
+ 
+   <group name="Verification">
+diff --git a/core/datasourcefactory.cpp b/core/datasourcefactory.cpp
+index cb7378e..faf8f08 100644
+--- a/core/datasourcefactory.cpp
++++ b/core/datasourcefactory.cpp
+@@ -447,7 +447,7 @@ void DataSourceFactory::addMirror(const KUrl &url, bool used, int numParalellCon
+                     connect(source, SIGNAL(finishedSegment(TransferDataSource*,int,bool)), this, SLOT(finishedSegment(TransferDataSource*,int,bool)));
+                     connect(source, SIGNAL(data(KIO::fileoffset_t,QByteArray,bool&)), this, SLOT(slotWriteData(KIO::fileoffset_t,QByteArray,bool&)));
+                     connect(source, SIGNAL(freeSegments(TransferDataSource*,QPair<int,int>)), this, SLOT(slotFreeSegments(TransferDataSource*,QPair<int,int>)));
+-                    connect(source, SIGNAL(log(QString,Transfer::LogLevel)), this, SIGNAL(log(QString,Transfer::LogLevel)));
++                    connect(source, SIGNAL(log(QString,Logging::LogLevel)), this, SIGNAL(log(QString,Logging::LogLevel)));
+                     connect(source, SIGNAL(urlChanged(KUrl, KUrl)), this, SLOT(slotUrlChanged(KUrl, KUrl)));
+ 
+                     slotUpdateCapabilities();
+diff --git a/core/datasourcefactory.h b/core/datasourcefactory.h
+index fb54897..d82b9eb 100644
+--- a/core/datasourcefactory.h
++++ b/core/datasourcefactory.h
+@@ -15,6 +15,7 @@
+ 
+ #include "transferdatasource.h"
+ #include "job.h"
++#include "core/logging.h"
+ 
+ #include <kio/job.h>
+ 
+@@ -171,7 +172,7 @@ class KGET_EXPORT DataSourceFactory : public QObject
+     Q_SIGNALS:
+         void capabilitiesChanged();
+         void dataSourceFactoryChange(Transfer::ChangesFlags change);
+-        void log(const QString &message, Transfer::LogLevel logLevel);
++        void log(const QString &message, Logging::LogLevel logLevel);
+ 
+     public slots:
+         void save(const QDomElement &element);
+diff --git a/core/logging.cpp b/core/logging.cpp
+new file mode 100644
+index 0000000..bcfd547
+--- /dev/null
++++ b/core/logging.cpp
+@@ -0,0 +1,31 @@
++#include <core/logging.h>
++
++// Logging //
++Logging::EntryRange Logging::
++log() const
++{
++    return EntryRange(m_log.begin(), m_log.end());
++}
++
++void Logging::
++setLog(const QString &message, const LogLevel level /*= Log_Info */)
++{
++    const Entry entry = { QTime::currentTime(), level, message };
++    m_log.push_back(entry);
++}
++
++/// LoggingHandler ///
++LoggingHandler::
++LoggingHandler(const Logging &logging)
++    : m_logging(logging)
++{}
++
++LoggingHandler::
++~LoggingHandler()
++{}
++
++LoggingHandler::EntryRange LoggingHandler::
++log() const
++{
++    return m_logging.log();
++}
+diff --git a/core/logging.h b/core/logging.h
+new file mode 100644
+index 0000000..e60bd4a
+--- /dev/null
++++ b/core/logging.h
+@@ -0,0 +1,62 @@
++#ifndef LOGGING_H
++#define LOGGING_H
++
++#include "../kget_export.h"
++
++#include <utility>
++#include <vector>
++
++#include <boost/range/iterator_range.hpp>
++
++#include <QtCore/QString>
++#include <QtCore/QTime>
++
++class KGET_EXPORT Logging
++{
++public:
++    enum LogLevel
++    {
++        Log_Info,
++        Log_Warning,
++        Log_Error
++    };
++
++    struct Entry {
++        QTime time;
++        LogLevel level;
++        QString message;
++    };
++    typedef std::vector<Entry> Entries;
++    typedef boost::iterator_range<Entries::const_iterator> EntryRange;
++
++    virtual ~Logging() {}
++
++    /**
++     * Transfer history
++     */
++    EntryRange log() const;
++
++    /**
++     * Set Transfer history
++     */
++    void setLog(const QString &message, const LogLevel level = Log_Info);
++
++private:
++    Entries m_log;
++};
++
++class KGET_EXPORT LoggingHandler
++{
++public:
++    typedef Logging::EntryRange EntryRange;
++
++    explicit LoggingHandler(const Logging &);
++    ~LoggingHandler();
++
++    EntryRange log() const;
++
++private:
++    const Logging &m_logging;
++};
++
++#endif // LOGGING_H
+diff --git a/core/transfer.cpp b/core/transfer.cpp
+index b4de613..6261a1e 100644
+--- a/core/transfer.cpp
++++ b/core/transfer.cpp
+@@ -198,22 +198,6 @@ void Transfer::checkShareRatio()
+         setDownloadLimit(0, Transfer::InvisibleSpeedLimit);
+ }
+ 
+-void Transfer::setLog(const QString& message, Transfer::LogLevel level)
+-{
+-    QString msg("<font color=\"blue\">" + QTime::currentTime().toString() + "</font> : ");
+-    if (level == Log_Error)
+-    {
+-        msg += "<font color=\"red\">" + message + "</font>";
+-    }
+-    if (level == Log_Warning)
+-    {
+-        msg += "<font color=\"yellow\">" + message + "</font>";
+-    } else {
+-        msg += message;
+-    }
+-    m_log << msg;
+-}
+-
+ TransferHandler * Transfer::handler()
+ {
+     if(!m_handler)
+diff --git a/core/transfer.h b/core/transfer.h
+index 029651f..957a2c6 100644
+--- a/core/transfer.h
++++ b/core/transfer.h
+@@ -78,13 +78,6 @@ class KGET_EXPORT Transfer : public Job
+         };
+         Q_DECLARE_FLAGS(Capabilities, Capability)
+ 
+-        enum LogLevel
+-        {
+-            Log_Info,
+-            Log_Warning,
+-            Log_Error
+-        };
+-
+         enum SpeedLimit
+         {
+             VisibleSpeedLimit   = 0x01,
+@@ -242,11 +235,6 @@ class KGET_EXPORT Transfer : public Job
+         bool isSelected() const             {return m_isSelected;}
+ 
+         /**
+-         * Transfer history
+-         */
+-        const QStringList log() const;
+-
+-        /**
+          * Defines the order between transfers
+          */
+         bool operator<(const Transfer& t2) const;
+@@ -321,12 +309,6 @@ class KGET_EXPORT Transfer : public Job
+          */
+         void capabilitiesChanged();
+ 
+-    public slots:
+-         /**
+-          * Set Transfer history
+-          */
+-         void setLog(const QString& message, Transfer::LogLevel level = Log_Info);
+-
+     protected:
+         /**
+          * Sets the Job status to jobStatus, the status text to text and
+@@ -356,7 +338,6 @@ class KGET_EXPORT Transfer : public Job
+         KUrl m_source;
+         KUrl m_dest;
+ 
+-        QStringList   m_log;
+         KIO::filesize_t m_totalSize;
+         KIO::filesize_t m_downloadedSize;
+         KIO::filesize_t m_uploadedSize;
+diff --git a/core/transferdatasource.h b/core/transferdatasource.h
+index c0761d2..292bfd9 100644
+--- a/core/transferdatasource.h
++++ b/core/transferdatasource.h
+@@ -14,6 +14,7 @@
+ 
+ #include "kget_export.h"
+ #include "transfer.h"
++#include "core/logging.h"
+ 
+ #include <QObject>
+ 
+@@ -222,8 +223,8 @@ class KGET_EXPORT TransferDataSource : public QObject
+          */
+         void freeSegments(TransferDataSource *source, QPair<int, int> segmentRange);
+ 
+-        void log(const QString &message, Transfer::LogLevel logLevel);
+-        
++        void log(const QString &message, Logging::LogLevel logLevel);
++
+         /**
+          * Emitted when the filename of a url changes, e.g. when a link redirects
+          */
+diff --git a/mainwindow.cpp b/mainwindow.cpp
+index 7e2ff9c..6574401 100644
+--- a/mainwindow.cpp
++++ b/mainwindow.cpp
+@@ -17,6 +17,7 @@
+ #include "mainwindow.h"
+ 
+ #include "core/kget.h"
++#include "core/logging.h"
+ #include "core/transferhandler.h"
+ #include "core/transfergrouphandler.h"
+ #include "core/transfertreemodel.h"
+@@ -30,6 +31,7 @@
+ #include "ui/newtransferdialog.h"
+ #include "ui/history/transferhistory.h"
+ #include "ui/groupsettingsdialog.h"
++#include "ui/transferlogdialog.h"
+ #include "ui/transfersettingsdialog.h"
+ #include "ui/linkview/kget_linkview.h"
+ #include "ui/metalinkcreator/metalinkcreator.h"
+@@ -342,6 +344,11 @@ void MainWindow::setupActions()
+     transferSettingsAction->setShortcuts(KShortcut("Ctrl+T"));
+     connect(transferSettingsAction, SIGNAL(triggered()), SLOT(slotTransferSettings()));
+ 
++    KAction *transferLogAction = actionCollection()->addAction("transfer_log");
++    transferLogAction->setText(i18n("Transfer &Log"));
++    transferLogAction->setIcon(KIcon("view-history"));
++    connect(transferLogAction, SIGNAL(triggered()), SLOT(slotTransferLog()));
++
+     KAction *listLinksAction = actionCollection()->addAction("import_links");
+     listLinksAction->setText(i18n("Import &Links..."));
+     listLinksAction->setIcon(KIcon("view-list-text"));
+@@ -1142,6 +1149,21 @@ void MainWindow::slotTransferSettings()
+     }
+ }
+ 
++void MainWindow::slotTransferLog()
++{
++    kDebug(5001);
++    QList<TransferHandler*> list = KGet::selectedTransfers();
++    if (list.size() != 1) return;
++
++    const TransferHandler * const handler = list.first();
++    const LoggingHandler * const logging =
++                            dynamic_cast<const LoggingHandler*>(handler);
++    if (!logging) return;
++
++    TransferLogDialog dialog(*logging, this);
++    dialog.exec();
++}
++
+ /** slots for link list **/
+ void MainWindow::slotShowListLinks()
+ {
+diff --git a/mainwindow.h b/mainwindow.h
+index 31f7294..d9d9434 100644
+--- a/mainwindow.h
++++ b/mainwindow.h
+@@ -109,6 +109,7 @@ private slots:
+     void slotTransfersShowDetails();
+     void slotTransfersCopySourceUrl();
+     void slotDeleteFinished();
++    void slotTransferLog();
+ 
+     // misc slots
+     void slotSaveMyself();
+diff --git a/transfer-plugins/kio/transferKio.cpp b/transfer-plugins/kio/transferKio.cpp
+index c72b083..adea69e 100644
+--- a/transfer-plugins/kio/transferKio.cpp
++++ b/transfer-plugins/kio/transferKio.cpp
+@@ -209,8 +209,8 @@ void TransferKio::slotResult( KJob * kioJob )
+ 
+ void TransferKio::slotInfoMessage( KJob * kioJob, const QString & msg )
+ {
+-  Q_UNUSED(kioJob)
+-    m_log.append(QString(msg));
++    Q_UNUSED(kioJob)
++    this->setLog(msg);
+ }
+ 
+ void TransferKio::slotPercent( KJob * kioJob, unsigned long percent )
+diff --git a/transfer-plugins/kio/transferKio.h b/transfer-plugins/kio/transferKio.h
+index 19faa4c..a64b906 100644
+--- a/transfer-plugins/kio/transferKio.h
++++ b/transfer-plugins/kio/transferKio.h
+@@ -16,15 +16,16 @@
+ #include <kio/job.h>
+ 
+ #include "core/transfer.h"
++#include "core/logging.h"
+ 
+ /**
+  * This transfer uses the KIO class to download files
+  */
+- 
++
+ 
+ class Verifier;
+ 
+-class TransferKio : public Transfer
++class TransferKio : public Transfer, public Logging
+ {
+     Q_OBJECT
+ 
+diff --git a/transfer-plugins/metalink/metalink.cpp b/transfer-plugins/metalink/metalink.cpp
+index d239f4b..7de2e24 100644
+--- a/transfer-plugins/metalink/metalink.cpp
++++ b/transfer-plugins/metalink/metalink.cpp
+@@ -155,7 +155,7 @@ bool Metalink::metalinkInit(const KUrl &src, const QByteArray &data)
+         connect(dataFactory, SIGNAL(dataSourceFactoryChange(Transfer::ChangesFlags)), this, SLOT(slotDataSourceFactoryChange(Transfer::ChangesFlags)));
+         connect(dataFactory->verifier(), SIGNAL(verified(bool)), this, SLOT(slotVerified(bool)));
+         connect(dataFactory->signature(), SIGNAL(verified(int)), this, SLOT(slotSignatureVerified()));
+-        connect(dataFactory, SIGNAL(log(QString,Transfer::LogLevel)), this, SLOT(setLog(QString,Transfer::LogLevel)));
++        connect(dataFactory, SIGNAL(log(QString,Logging::LogLevel)), this, SLOT(setLog(QString,Logging::LogLevel)));
+ 
+         //add the DataSources
+         for (int i = 0; i < urlList.size(); ++i)
+@@ -603,7 +603,7 @@ void Metalink::load(const QDomElement *element)
+         m_dataSourceFactory[file->dest()] = file;
+         connect(file->verifier(), SIGNAL(verified(bool)), this, SLOT(slotVerified(bool)));
+         connect(file->signature(), SIGNAL(verified(int)), this, SLOT(slotSignatureVerified()));
+-        connect(file, SIGNAL(log(QString,Transfer::LogLevel)), this, SLOT(setLog(QString,Transfer::LogLevel)));
++        connect(file, SIGNAL(log(QString,Logging::LogLevel)), this, SLOT(setLog(QString,Logging::LogLevel)));
+ 
+         //start the DataSourceFactories that were Started when KGet was closed
+         if (file->status() == Job::Running) {
+diff --git a/transfer-plugins/metalink/metalinkhttp.cpp b/transfer-plugins/metalink/metalinkhttp.cpp
+index 07fbdbc..6ea1a98 100644
+--- a/transfer-plugins/metalink/metalinkhttp.cpp
++++ b/transfer-plugins/metalink/metalinkhttp.cpp
+@@ -23,6 +23,7 @@
+ #include "core/urlchecker.h"
+ #include "core/verifier.h"
+ #include "core/signature.h"
++#include "core/logging.h"
+ 
+ #ifdef HAVE_NEPOMUK
+     #include "core/nepomukhandler.h"
+@@ -79,7 +80,7 @@ void MetalinkHttp::load(const QDomElement *element)
+     connect(fac, SIGNAL(dataSourceFactoryChange(Transfer::ChangesFlags)), this, SLOT(slotDataSourceFactoryChange(Transfer::ChangesFlags)));
+     connect(fac->verifier(), SIGNAL(verified(bool)), this, SLOT(slotVerified(bool)));
+     connect(fac->signature(), SIGNAL(verified(int)), this, SLOT(slotSignatureVerified()));
+-    connect(fac, SIGNAL(log(QString,Transfer::LogLevel)), this, SLOT(setLog(QString,Transfer::LogLevel)));
++    connect(fac, SIGNAL(log(QString,Logging::LogLevel)), this, SLOT(setLog(QString,Logging::LogLevel)));
+ 
+     fac->load(element);
+ 
+@@ -190,7 +191,7 @@ bool MetalinkHttp::metalinkHttpInit()
+     connect(dataFactory, SIGNAL(dataSourceFactoryChange(Transfer::ChangesFlags)), this, SLOT(slotDataSourceFactoryChange(Transfer::ChangesFlags)));
+     connect(dataFactory->verifier(), SIGNAL(verified(bool)), this, SLOT(slotVerified(bool)));
+     connect(dataFactory->signature(), SIGNAL(verified(int)), this, SLOT(slotSignatureVerified()));
+-    connect(dataFactory, SIGNAL(log(QString,Transfer::LogLevel)), this, SLOT(setLog(QString,Transfer::LogLevel)));
++    connect(dataFactory, SIGNAL(log(QString,Logging::LogLevel)), this, SLOT(setLog(QString,Logging::LogLevel)));
+ 
+     //add the Mirrors Sources
+ 
+diff --git a/transfer-plugins/metalink/metalinkxml.cpp b/transfer-plugins/metalink/metalinkxml.cpp
+index 5b5553c..069cc45 100644
+--- a/transfer-plugins/metalink/metalinkxml.cpp
++++ b/transfer-plugins/metalink/metalinkxml.cpp
+@@ -151,7 +151,7 @@ bool MetalinkXml::metalinkInit(const KUrl &src, const QByteArray &data)
+         connect(dataFactory, SIGNAL(dataSourceFactoryChange(Transfer::ChangesFlags)), this, SLOT(slotDataSourceFactoryChange(Transfer::ChangesFlags)));
+         connect(dataFactory->verifier(), SIGNAL(verified(bool)), this, SLOT(slotVerified(bool)));
+         connect(dataFactory->signature(), SIGNAL(verified(int)), this, SLOT(slotSignatureVerified()));
+-        connect(dataFactory, SIGNAL(log(QString,Transfer::LogLevel)), this, SLOT(setLog(QString,Transfer::LogLevel)));
++        connect(dataFactory, SIGNAL(log(QString,Logging::LogLevel)), this, SLOT(setLog(QString,Logging::LogLevel)));
+ 
+         //add the DataSources
+         for (int i = 0; i < urlList.size(); ++i)
+@@ -301,7 +301,7 @@ void MetalinkXml::load(const QDomElement *element)
+         m_dataSourceFactory[file->dest()] = file;
+         connect(file->verifier(), SIGNAL(verified(bool)), this, SLOT(slotVerified(bool)));
+         connect(file->signature(), SIGNAL(verified(int)), this, SLOT(slotSignatureVerified()));
+-        connect(file, SIGNAL(log(QString,Transfer::LogLevel)), this, SLOT(setLog(QString,Transfer::LogLevel)));
++        connect(file, SIGNAL(log(QString,Logging::LogLevel)), this, SLOT(setLog(QString,Logging::LogLevel)));
+ 
+         //start the DataSourceFactories that were Started when KGet was closed
+         if (file->status() == Job::Running) {
+diff --git a/transfer-plugins/multisegmentkio/multisegkiodatasource.cpp b/transfer-plugins/multisegmentkio/multisegkiodatasource.cpp
+index ba8a56f..bbb41dc 100644
+--- a/transfer-plugins/multisegmentkio/multisegkiodatasource.cpp
++++ b/transfer-plugins/multisegmentkio/multisegkiodatasource.cpp
+@@ -78,7 +78,7 @@ void MultiSegKioDataSource::addSegments(const QPair<KIO::fileoffset_t, KIO::file
+     connect(segment, SIGNAL(totalSize(KIO::filesize_t,QPair<int,int>)), this, SLOT(slotTotalSize(KIO::filesize_t,QPair<int,int>)));
+     connect(segment, SIGNAL(data(KIO::fileoffset_t,QByteArray,bool&)), this, SIGNAL(data(KIO::fileoffset_t,QByteArray,bool&)));
+     connect(segment, SIGNAL(finishedSegment(Segment*,int,bool)), this, SLOT(slotFinishedSegment(Segment*,int,bool)));
+-    connect(segment, SIGNAL(error(Segment*,QString,Transfer::LogLevel)), this, SLOT(slotError(Segment*,QString,Transfer::LogLevel)));
++    connect(segment, SIGNAL(error(Segment*,QString,Logging::LogLevel)), this, SLOT(slotError(Segment*,QString,Logging::LogLevel)));
+     connect(segment, SIGNAL(finishedDownload(KIO::filesize_t)), this, SLOT(slotFinishedDownload(KIO::filesize_t)));
+     connect(segment, SIGNAL(urlChanged(KUrl)), this, SLOT(slotUrlChanged(KUrl)));
+ 
+@@ -223,7 +223,7 @@ bool MultiSegKioDataSource::tryMerge(const QPair<KIO::fileoffset_t, KIO::fileoff
+     return false;
+ }
+ 
+-void MultiSegKioDataSource::slotError(Segment *segment, const QString &errorText, Transfer::LogLevel logLevel)
++void MultiSegKioDataSource::slotError(Segment *segment, const QString &errorText, Logging::LogLevel logLevel)
+ {
+     kDebug(5001) << "Error" << errorText << "segment" << segment;
+ 
+diff --git a/transfer-plugins/multisegmentkio/multisegkiodatasource.h b/transfer-plugins/multisegmentkio/multisegkiodatasource.h
+index 909e52e..f1cc456 100644
+--- a/transfer-plugins/multisegmentkio/multisegkiodatasource.h
++++ b/transfer-plugins/multisegmentkio/multisegkiodatasource.h
+@@ -12,6 +12,7 @@
+ #ifndef KGET_MULTISEGKIODATASOURCE_H
+ #define KGET_MULTISEGKIODATASOURCE_H
+ 
++#include "core/logging.h"
+ #include "core/transferdatasource.h"
+ 
+ class Segment;
+@@ -46,7 +47,7 @@ class MultiSegKioDataSource : public TransferDataSource
+          * There was an error while downloading segment, the number of connections this
+          * TransferDataSource uses simultanously gets reduced
+          */
+-        void slotError(Segment *segment, const QString &errorText, Transfer::LogLevel logLevel);
++        void slotError(Segment *segment, const QString &errorText, Logging::LogLevel logLevel);
+ 
+         /**the following slots are there to check if the size reported by the mirror
+          * Checks if the sizre reported by the mirror is correct
+diff --git a/transfer-plugins/multisegmentkio/segment.cpp b/transfer-plugins/multisegmentkio/segment.cpp
+index 9c7fcba..a8094af 100644
+--- a/transfer-plugins/multisegmentkio/segment.cpp
++++ b/transfer-plugins/multisegmentkio/segment.cpp
+@@ -193,7 +193,7 @@ void Segment::slotResult( KJob *job )
+         return;
+     }
+     if (job->error() && (m_status == Running)) {
+-        emit error(this, job->errorString(), Transfer::Log_Error);
++        emit error(this, job->errorString(), Logging::Log_Error);
+     }
+ }
+ 
+@@ -206,7 +206,7 @@ void Segment::slotData(KIO::Job *, const QByteArray& _data)
+         stopTransfer();
+         setStatus(Killed, false );
+         const QString errorText = KIO::buildErrorString(KIO::ERR_CANNOT_RESUME, m_url.prettyUrl());
+-        emit error(this, errorText, Transfer::Log_Warning);
++        emit error(this, errorText, Logging::Log_Warning);
+         return;
+     }
+ 
+@@ -292,7 +292,7 @@ void Segment::slotWriteRest()
+ 
+     if (++m_errorCount >= 100) {
+         kWarning() << "Failed to write to the file:" << m_url << this;
+-        emit error(this, i18n("Failed to write to the file."), Transfer::Log_Error);
++        emit error(this, i18n("Failed to write to the file."), Logging::Log_Error);
+     } else {
+         kDebug() << "Wait 50 msec:" << this;
+         QTimer::singleShot(50, this, SLOT(slotWriteRest()));
+diff --git a/transfer-plugins/multisegmentkio/segment.h b/transfer-plugins/multisegmentkio/segment.h
+index e4d27e6..4cdd3ba 100644
+--- a/transfer-plugins/multisegmentkio/segment.h
++++ b/transfer-plugins/multisegmentkio/segment.h
+@@ -17,6 +17,7 @@
+ 
+ #include <KIO/Job>
+ 
++#include "core/logging.h"
+ #include "core/transfer.h"
+ 
+ /**
+@@ -113,7 +114,7 @@ class Segment : public QObject
+         /**
+          * Emitted whenever the transfer is closed with an error
+          */
+-        void error(Segment *segment, const QString &errorText, Transfer::LogLevel logLevel);
++        void error(Segment *segment, const QString &errorText, Logging::LogLevel logLevel);
+         void finishedSegment(Segment *segment, int segmentNum, bool connectionFinished = true);
+         void statusChanged( Segment*);
+         void speed(ulong speed);
+diff --git a/transfer-plugins/multisegmentkio/transfermultisegkio.cpp b/transfer-plugins/multisegmentkio/transfermultisegkio.cpp
+index c1ffb43..34283c2 100644
+--- a/transfer-plugins/multisegmentkio/transfermultisegkio.cpp
++++ b/transfer-plugins/multisegmentkio/transfermultisegkio.cpp
+@@ -52,7 +52,7 @@ void TransferMultiSegKio::init()
+         connect(m_dataSourceFactory, SIGNAL(capabilitiesChanged()), this, SLOT(slotUpdateCapabilities()));
+         connect(m_dataSourceFactory, SIGNAL(dataSourceFactoryChange(Transfer::ChangesFlags)), this, SLOT(slotDataSourceFactoryChange(Transfer::ChangesFlags)));
+         connect(m_dataSourceFactory->verifier(), SIGNAL(verified(bool)), this, SLOT(slotVerified(bool)));
+-        connect(m_dataSourceFactory, SIGNAL(log(QString,Transfer::LogLevel)), this, SLOT(setLog(QString,Transfer::LogLevel)));
++        connect(m_dataSourceFactory, SIGNAL(log(QString,Logging::LogLevel)), this, SLOT(slotLog(QString,Logging::LogLevel)));
+ 
+         m_dataSourceFactory->addMirror(m_source, MultiSegKioSettings::segments());
+ 
+@@ -279,6 +279,11 @@ void TransferMultiSegKio::slotStatResult(KJob* kioJob)
+     setTransferChange(Tc_Status, true);
+ }
+ 
++void TransferMultiSegKio::slotLog(QString message, Logging::LogLevel level)
++{
++    this->setLog(message, level);
++}
++
+ void TransferMultiSegKio::slotSearchUrls(const QList<KUrl> &urls)
+ {
+     kDebug(5001) << "Found " << urls.size() << " urls.";
+diff --git a/transfer-plugins/multisegmentkio/transfermultisegkio.h b/transfer-plugins/multisegmentkio/transfermultisegkio.h
+index 1f84f77..7485f18 100644
+--- a/transfer-plugins/multisegmentkio/transfermultisegkio.h
++++ b/transfer-plugins/multisegmentkio/transfermultisegkio.h
+@@ -17,6 +17,7 @@
+ 
+ #include "core/transfer.h"
+ #include "core/datasourcefactory.h"
++#include "core/logging.h"
+ 
+ /**
+  * This transfer uses multiple segments to download a file
+@@ -25,7 +26,7 @@
+ class DataSourceFactory;
+ class FileModel;
+ 
+-class TransferMultiSegKio : public Transfer
++class TransferMultiSegKio : public Transfer, public Logging
+ {
+     Q_OBJECT
+ 
+@@ -83,6 +84,7 @@ class TransferMultiSegKio : public Transfer
+         void slotRename(const KUrl &oldUrl, const KUrl &newUrl);
+         void slotVerified(bool isVerified);
+         void slotStatResult(KJob * kioJob);
++        void slotLog(QString, Logging::LogLevel);
+ 
+     private:
+         bool m_movingFile;
+diff --git a/ui/contextmenu.cpp b/ui/contextmenu.cpp
+index 721c52f..604db28 100644
+--- a/ui/contextmenu.cpp
++++ b/ui/contextmenu.cpp
+@@ -17,6 +17,7 @@
+ #endif
+ 
+ #include "core/kget.h"
++#include "core/logging.h"
+ #include "core/plugin/transferfactory.h"
+ #include "core/transferhandler.h"
+ #include "core/transfergrouphandler.h"
+@@ -87,6 +88,9 @@ KMenu * ContextMenu::createTransferContextMenu(QList<TransferHandler*> transfers
+     popup->addAction( KGet::actionCollection()->action("transfer_show_details") );
+     popup->addAction( KGet::actionCollection()->action("transfer_copy_source_url") );
+ 
++    if ( dynamic_cast<LoggingHandler*>(transfers.first()) ) {
++        popup->addAction( KGet::actionCollection()->action("transfer_log") );
++    }
+     return popup;
+ }
+ 
+diff --git a/ui/transferlogdialog.cpp b/ui/transferlogdialog.cpp
+new file mode 100644
+index 0000000..61f4ba5
+--- /dev/null
++++ b/ui/transferlogdialog.cpp
+@@ -0,0 +1,106 @@
++#include "transferlogdialog.h"
++#include "settings.h"
++
++/// TransferLogDialog ///
++
++TransferLogDialog::
++TransferLogDialog(const LoggingHandler &handler, QWidget * const parent/*= 0*/)
++    : KGetSaveSizeDialog("TransferLogDialog", parent), m_model(handler)
++{
++    m_ui.setupUi(mainWidget());
++
++    m_ui.m_treeView->setModel(&m_model);
++    const QList<int> widths = Settings::logColumnWidths();
++    for (size_t col = 0u, len = widths.size(); col < len; ++col) {
++        m_ui.m_treeView->setColumnWidth(col, widths[col]);
++    }
++
++    this->setCaption(i18n("Transfer Log"));
++    this->setButtons(KDialog::Ok);
++}
++
++TransferLogDialog::
++~TransferLogDialog()
++{
++    QList<int> widths;
++    const QTreeView *treeView = m_ui.m_treeView;
++
++    const size_t numColumns = treeView->model()->columnCount();
++    for (size_t i = 0u; i < numColumns; ++i) {
++        widths << treeView->columnWidth(i);
++    }
++
++    Settings::setLogColumnWidths(widths);
++    Settings::self()->writeConfig();
++}
++
++/// TransferLogTableModel ///
++
++TransferLogTableModel::
++TransferLogTableModel(const LoggingHandler &handler,
++                                           QObject * const parent /*= 0*/)
++    : QAbstractTableModel(parent), m_log(handler.log())
++{}
++
++int TransferLogTableModel::
++rowCount (const QModelIndex &) const
++{
++    return m_log.size();
++}
++
++int TransferLogTableModel::
++columnCount (const QModelIndex &) const
++{
++    return 3; // time, level, message
++}
++
++QVariant TransferLogTableModel::
++data(const QModelIndex &index, const int role /*= Qt::DisplayRole*/) const
++{
++    if (role != Qt::DisplayRole) return QVariant();
++
++    const Logging::Entry &entry = m_log[index.row()];
++    static const QString &labelInfo = i18n("Info");
++    static const QString &labelWarning = i18n("Warning");
++    static const QString &labelError = i18n("Error");
++
++    switch (index.column()) {
++    case Column_Time:
++        return entry.time.toString();
++    case Column_Level:
++        switch (entry.level) {
++        case Logging::Log_Info:
++            return labelInfo;
++        case Logging::Log_Warning:
++            return labelWarning;
++        case Logging::Log_Error:
++            return labelError;
++        default:
++            return QString::fromUtf8("unknown level: %1").arg(entry.level);
++        }
++    case Column_Message:
++        return entry.message;
++    default:
++        return QString::fromUtf8("unknown column: %1").arg(index.column());
++    }
++}
++
++QVariant TransferLogTableModel::
++headerData(const int section, const Qt::Orientation orientation,
++                              const int role/*= Qt::DisplayRole*/) const
++{
++    if (role != Qt::DisplayRole || orientation != Qt::Horizontal) {
++        return QVariant();
++    }
++
++    switch (section) {
++    case Column_Time:
++        return i18n("Time");
++    case Column_Level:
++        return i18n("Level");
++    case Column_Message:
++        return i18n("Message");
++    default:
++        return QString::fromUtf8("unknown section: %1").arg(section);
++    }
++}
+diff --git a/ui/transferlogdialog.h b/ui/transferlogdialog.h
+new file mode 100644
+index 0000000..d3e173e
+--- /dev/null
++++ b/ui/transferlogdialog.h
+@@ -0,0 +1,48 @@
++#ifndef TRANSFERLOGDIALOG_H
++#define TRANSFERLOGDIALOG_H
++
++#include "ui_transferlogdialog.h"
++#include "core/basedialog.h"
++#include "core/logging.h"
++
++#include <QtCore/QAbstractTableModel>
++
++class QModelIndex;
++class QObject;
++class QVariant;
++class QWidget;
++
++class TransferLogTableModel : public QAbstractTableModel
++{
++public:
++    enum Column { Column_Time = 0, Column_Level = 1, Column_Message = 2 };
++
++    explicit TransferLogTableModel(
++                      const LoggingHandler &, QObject * const parent = 0);
++
++    // override from QAbstractItemModel
++    virtual int rowCount (const QModelIndex &) const;
++    virtual int columnCount (const QModelIndex &) const;
++    virtual QVariant data(const QModelIndex &,
++                          int role = Qt::DisplayRole) const;
++    virtual QVariant headerData(int section, Qt::Orientation,
++                                int role = Qt::DisplayRole) const;
++
++private:
++    Logging::EntryRange m_log;
++};
++
++class TransferLogDialog : public KGetSaveSizeDialog
++{
++    Q_OBJECT
++public:
++    explicit TransferLogDialog(
++                      const LoggingHandler &, QWidget * const parent = 0);
++    virtual ~TransferLogDialog();
++
++private:
++    Ui::TransferLogDialog m_ui;
++    TransferLogTableModel m_model;
++};
++
++#endif // TRANSFERLOGDIALOG_H
+diff --git a/ui/transferlogdialog.ui b/ui/transferlogdialog.ui
+new file mode 100644
+index 0000000..bd4527e
+--- /dev/null
++++ b/ui/transferlogdialog.ui
+@@ -0,0 +1,37 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<ui version="4.0">
++ <class>TransferLogDialog</class>
++ <widget class="QWidget" name="TransferLogDialog">
++  <property name="geometry">
++   <rect>
++    <x>0</x>
++    <y>0</y>
++    <width>608</width>
++    <height>231</height>
++   </rect>
++  </property>
++  <property name="windowTitle">
++   <string>Transfer Log</string>
++  </property>
++  <layout class="QVBoxLayout" name="verticalLayout">
++   <property name="spacing">
++    <number>0</number>
++   </property>
++   <property name="margin">
++    <number>0</number>
++   </property>
++   <item>
++    <widget class="QTreeView" name="m_treeView">
++     <property name="rootIsDecorated">
++      <bool>false</bool>
++     </property>
++     <property name="itemsExpandable">
++      <bool>false</bool>
++     </property>
++    </widget>
++   </item>
++  </layout>
++ </widget>
++ <resources/>
++ <connections/>
++</ui>
+-- 
+2.2.1
+

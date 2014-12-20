@@ -1,0 +1,95 @@
+From 5a152c2ef5b9cc7be935a97bbfaa8a23fee39dac Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Wed, 17 Dec 2014 20:23:27 +0900
+Subject: [PATCH] Fix bug when item get deleted when it is running.
+
+---
+ transfer-plugins/curl/curl.cpp         |  2 ++
+ transfer-plugins/curl/curlthread.cpp   | 12 +++++++-----
+ transfer-plugins/curl/curltransfer.cpp | 10 ++++++++++
+ 3 files changed, 19 insertions(+), 5 deletions(-)
+
+diff --git a/transfer-plugins/curl/curl.cpp b/transfer-plugins/curl/curl.cpp
+index 26830fa..9136071 100644
+--- a/transfer-plugins/curl/curl.cpp
++++ b/transfer-plugins/curl/curl.cpp
+@@ -42,9 +42,11 @@ void Curl::perform()
+     kDebug(5001);
+     const CURLcode res = curl_easy_perform(m_handle);
+     if (res == CURLE_ABORTED_BY_CALLBACK) {
++        kDebug(5001) << "canceled";
+         throw Canceled();
+     }
+     else if (res != CURLE_OK) {
++        kDebug(5001) << "error:" << res;
+         throw Error(res);
+     }
+ }
+diff --git a/transfer-plugins/curl/curlthread.cpp b/transfer-plugins/curl/curlthread.cpp
+index 5996ff1..dee4bbd 100644
+--- a/transfer-plugins/curl/curlthread.cpp
++++ b/transfer-plugins/curl/curlthread.cpp
+@@ -25,7 +25,9 @@ CurlThread::CurlThread(const KUrl &src, const KUrl &dest) // nothrow()
+ {}
+ 
+ CurlThread::~CurlThread() // nothrow()
+-{}
++{
++    kDebug(5001);
++}
+ 
+ void CurlThread::run() // nothrow()
+ try {
+@@ -254,6 +256,10 @@ int CurlThread::Private::progressCallback(void *data,
+             curl_off_t dltotal, curl_off_t dlnow, curl_off_t, curl_off_t)
+ {
+     Private* const obj = static_cast<Private*>(data);
++    if (obj->m_cancel) {
++        return -1;
++    }
++
+     Progress* const progress = &obj->m_progress;
+ 
+     time_t now;
+@@ -266,10 +272,6 @@ int CurlThread::Private::progressCallback(void *data,
+         return CURLE_OK;
+     }
+ 
+-    if (obj->m_cancel) {
+-        return -1;
+-    }
+-
+     if (obj->m_speedLimit) {
+         kDebug(5001) << "limit download speed:" << obj->m_speedLimit;
+         obj->m_curl.setOption(CURLOPT_MAX_RECV_SPEED_LARGE,
+diff --git a/transfer-plugins/curl/curltransfer.cpp b/transfer-plugins/curl/curltransfer.cpp
+index d843795..73b12ef 100644
+--- a/transfer-plugins/curl/curltransfer.cpp
++++ b/transfer-plugins/curl/curltransfer.cpp
+@@ -17,6 +17,13 @@ CurlTransfer::CurlTransfer(TransferGroup *parent, TransferFactory *factory,
+ CurlTransfer::~CurlTransfer()
+ {
+     kDebug(5001);
++    if (m_curlThread && m_curlThread->isRunning()) {
++        m_curlThread->cancel();
++        bool finished = m_curlThread->wait(5000);
++        if (!finished) {
++            kDebug(5001) << "Couldn't finish curl thread.";
++        }
++    }
+ }
+ 
+ void CurlTransfer::start()
+@@ -71,6 +78,9 @@ catch (const std::exception &e) {
+ void CurlTransfer::deinit(Transfer::DeleteOptions options)
+ {
+     kDebug(5001);
++    if (m_curlThread && m_curlThread->isRunning()) {
++        m_curlThread->cancel();
++    }
+ }
+ 
+ void CurlTransfer::slotTotalSize(const qlonglong size)
+-- 
+2.2.1
+
