@@ -1,0 +1,127 @@
+From 6f2d55f1fc8d1d56876793b3290d642aed1896ad Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sat, 20 Dec 2014 22:52:00 +0900
+Subject: [PATCH] Support capability of copying selected log entry to clipboard
+
+---
+ ui/transferlogdialog.cpp | 58 ++++++++++++++++++++++++++++++++++++++++++++++--
+ ui/transferlogdialog.h   | 10 +++++++--
+ 2 files changed, 64 insertions(+), 4 deletions(-)
+
+diff --git a/ui/transferlogdialog.cpp b/ui/transferlogdialog.cpp
+index 61f4ba5..897da08 100644
+--- a/ui/transferlogdialog.cpp
++++ b/ui/transferlogdialog.cpp
+@@ -1,6 +1,14 @@
+ #include "transferlogdialog.h"
+ #include "settings.h"
+ 
++#include <KDE/KAction>
++#include <KDE/KStandardAction>
++#include <QtCore/QModelIndexList>
++#include <QtGui/QApplication>
++#include <QtGui/QClipboard>
++#include <QtGui/QContextMenuEvent>
++#include <QtGui/QMenu>
++
+ /// TransferLogDialog ///
+ 
+ TransferLogDialog::
+@@ -8,11 +16,13 @@ TransferLogDialog(const LoggingHandler &handler, QWidget * const parent/*= 0*/)
+     : KGetSaveSizeDialog("TransferLogDialog", parent), m_model(handler)
+ {
+     m_ui.setupUi(mainWidget());
++    QTreeView * const treeView = m_ui.m_treeView;
+ 
+-    m_ui.m_treeView->setModel(&m_model);
++    treeView->setModel(&m_model);
++    treeView->setSelectionMode(QTreeView::ExtendedSelection);
+     const QList<int> widths = Settings::logColumnWidths();
+     for (size_t col = 0u, len = widths.size(); col < len; ++col) {
+-        m_ui.m_treeView->setColumnWidth(col, widths[col]);
++        treeView->setColumnWidth(col, widths[col]);
+     }
+ 
+     this->setCaption(i18n("Transfer Log"));
+@@ -34,6 +44,50 @@ TransferLogDialog::
+     Settings::self()->writeConfig();
+ }
+ 
++void TransferLogDialog::
++contextMenuEvent(QContextMenuEvent *e)
++{
++    const QTreeView * const treeView = m_ui.m_treeView;
++    const QModelIndexList &selected =
++                    treeView->selectionModel()->selectedIndexes();
++
++    QMenu menu(this);
++    KAction * const copyAction =
++            KStandardAction::copy(this, SLOT(slotCopy()), &menu);
++    menu.addAction(copyAction);
++    if (selected.isEmpty()) copyAction->setEnabled(false);
++
++    KAction * const selectAllAction =
++        KStandardAction::selectAll(treeView, SLOT(selectAll()), &menu);
++    menu.addAction(selectAllAction);
++
++    menu.exec(e->globalPos());
++}
++
++void TransferLogDialog::
++slotCopy()
++{
++    const static QString separator = QString::fromAscii(",");
++
++    QString text;
++    const size_t columns = m_model.columnCount();
++    const QModelIndexList &selectedRows =
++        m_ui.m_treeView->selectionModel()->selectedRows();
++
++    foreach (const QModelIndex &rowIndex, selectedRows) {
++        const size_t row = rowIndex.row();
++        QStringList fields;
++        for (size_t col = 0u; col < columns; ++col) {
++            const QModelIndex &index = m_model.index(row, col);
++            fields << m_model.data(index).toString();
++        }
++        text += fields.join(separator);
++    }
++
++    QApplication::clipboard()->setText(text);
++    kDebug(5001) << text;
++}
++
+ /// TransferLogTableModel ///
+ 
+ TransferLogTableModel::
+diff --git a/ui/transferlogdialog.h b/ui/transferlogdialog.h
+index d3e173e..22acd05 100644
+--- a/ui/transferlogdialog.h
++++ b/ui/transferlogdialog.h
+@@ -21,8 +21,8 @@ public:
+                       const LoggingHandler &, QObject * const parent = 0);
+ 
+     // override from QAbstractItemModel
+-    virtual int rowCount (const QModelIndex &) const;
+-    virtual int columnCount (const QModelIndex &) const;
++    virtual int rowCount (const QModelIndex & = QModelIndex()) const;
++    virtual int columnCount (const QModelIndex & = QModelIndex()) const;
+     virtual QVariant data(const QModelIndex &,
+                           int role = Qt::DisplayRole) const;
+     virtual QVariant headerData(int section, Qt::Orientation,
+@@ -41,6 +41,12 @@ public:
+     virtual ~TransferLogDialog();
+ 
+ private:
++    virtual void contextMenuEvent(QContextMenuEvent *); // QWidget
++
++private slots:
++    void slotCopy();
++
++private:
+     Ui::TransferLogDialog m_ui;
+     TransferLogTableModel m_model;
+ };
+-- 
+2.2.1
+

@@ -1,0 +1,43 @@
+From 726c30e82c2287509a49cebe08ea6e313df60253 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sun, 11 Jan 2015 21:35:06 +0900
+Subject: [PATCH] Remove add tab button and delete tab button
+
+---
+ src/qt/mainwindow.cpp | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/qt/mainwindow.cpp b/src/qt/mainwindow.cpp
+index c3e2e07..7d9f843 100644
+--- a/src/qt/mainwindow.cpp
++++ b/src/qt/mainwindow.cpp
+@@ -34,7 +34,7 @@ MainWindow::MainWindow( gui_T* gui, QWidget *parent)
+ 			this, SLOT(updateTabOrientation()));
+ 
+ 	tabbar = new TabBar(tabtoolbar);
+-	tabbar->setTabsClosable(true);
++	//tabbar->setTabsClosable(true);
+ 	tabbar->setExpanding(false);
+ 	tabbar->setFocusPolicy(Qt::NoFocus);
+ 	tabbar->setDrawBase(false);
+@@ -46,14 +46,14 @@ MainWindow::MainWindow( gui_T* gui, QWidget *parent)
+ 	tabbar->addTab("VIM"); // One tab must always exist
+ 
+ 	tabtoolbar->addWidget(tabbar);
+-	QAction *newTab = tabtoolbar->addAction( VimWrapper::icon("tab-new"), "New Tab");
++	//QAction *newTab = tabtoolbar->addAction( VimWrapper::icon("tab-new"), "New Tab");
+ 
+ 	connect( tabbar, SIGNAL(tabCloseRequested(int)),
+ 			this, SLOT(closeTab(int)));
+ 	connect( tabbar, SIGNAL(currentChanged(int)),
+ 			this, SLOT(switchTab(int)));
+-	connect( newTab, SIGNAL(triggered()),
+-			this, SLOT(openNewTab()));
++	//connect( newTab, SIGNAL(triggered()),
++	//		this, SLOT(openNewTab()));
+ 
+ 
+ 	vimshell->setFocus();
+-- 
+2.2.1
+
