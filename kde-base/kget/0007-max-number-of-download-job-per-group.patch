@@ -1,0 +1,319 @@
+From 4082a45a0aedab1b78a8df10678b6884e752f9b1 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Fri, 6 Feb 2015 17:51:36 +0900
+Subject: [PATCH] Squashed commit of the following:
+
+commit 9c46d5effe6d6f3789f947a0b6589de9855871c0
+Author: stream <stream009@gmail.com>
+Date:   Sat Dec 27 22:21:41 2014 +0900
+
+    Refactoring and make sure changing job count is property updated.
+
+commit af75a0c2111ef75bd7481be7cebff4d99175f7f6
+Author: stream <stream009@gmail.com>
+Date:   Tue Dec 23 16:10:51 2014 +0900
+
+    Bug fix
+
+commit c5ea0605a9921fb294861b0a1f6243a2d0260bfa
+Author: stream <stream009@gmail.com>
+Date:   Mon Dec 22 17:24:02 2014 +0900
+
+    Support setting maximum download job count per group.
+---
+ core/jobqueue.cpp           | 34 +++++++++++++++++++++++++++-------
+ core/jobqueue.h             | 18 ++++++++++++------
+ core/transfergroup.cpp      | 10 ++++++++++
+ core/transfergroup.h        |  8 ++++----
+ core/transfergrouphandler.h | 16 +++++++++++++++-
+ ui/groupsettingsdialog.cpp  |  6 ++++++
+ ui/groupsettingsdialog.ui   | 23 +++++++++++++++++++++++
+ 7 files changed, 97 insertions(+), 18 deletions(-)
+
+diff --git a/core/jobqueue.cpp b/core/jobqueue.cpp
+index a1e6252..ac2e3f2 100644
+--- a/core/jobqueue.cpp
++++ b/core/jobqueue.cpp
+@@ -16,7 +16,6 @@
+ 
+ JobQueue::JobQueue(Scheduler * parent)
+     : QObject(parent),
+-      m_maxSimultaneousJobs(2),
+       m_scheduler(parent),
+       m_status(Running)
+ {
+@@ -44,12 +43,12 @@ const QList<Job *> JobQueue::runningJobs()
+ void JobQueue::setStatus(Status queueStatus)
+ {
+     m_status = queueStatus;
+-    
++
+     // Now make sure to reset all the job policy that shouldn't
+     // be applied anymore.
+     iterator it = begin();
+     iterator itEnd = end();
+-    
++
+     for( ; it!=itEnd  ; ++it )
+     {
+ 	if( ( m_status == JobQueue::Running ) &&
+@@ -57,21 +56,42 @@ void JobQueue::setStatus(Status queueStatus)
+ 	{
+ 	    (*it)->setPolicy(Job::None);
+ 	}
+-	
++
+ 	if( ( m_status == JobQueue::Stopped ) &&
+ 	    ( (*it)->status() == Job::Stopped ) )
+ 	{
+ 	    (*it)->setPolicy(Job::None);
+ 	}
+     }
+-    
++
++    m_scheduler->jobQueueChangedEvent(this, m_status);
++}
++
++void JobQueue::setMaxSimultaneousJobs(int n)
++{
++    kDebug(5001) << n;
++    if (n == 0)
++    {
++        m_maxSimultaneousJobs = boost::none;
++    }
++    else
++    {
++        m_maxSimultaneousJobs = n;
++    }
+     m_scheduler->jobQueueChangedEvent(this, m_status);
+ }
+ 
+ int JobQueue::maxSimultaneousJobs() const
+ {
+-    const int maxConnections = Settings::maxConnections();
+-    return (maxConnections ? maxConnections : 1000);// High value just to indicate no limit
++    if (m_maxSimultaneousJobs)
++    {
++        return m_maxSimultaneousJobs.value();
++    }
++    else
++    {
++        const int maxConnections = Settings::maxConnections();
++        return (maxConnections ? maxConnections : 1000);// High value just to indicate no limit
++    }
+ }
+ 
+ void JobQueue::append(Job * job)
+diff --git a/core/jobqueue.h b/core/jobqueue.h
+index 51b9442..3a6a9c2 100644
+--- a/core/jobqueue.h
++++ b/core/jobqueue.h
+@@ -15,10 +15,10 @@
+ /**
+  * @brief JobQueue class
+  *
+- * This class abstracts the concept of queue. A queue is, basically, a 
++ * This class abstracts the concept of queue. A queue is, basically, a
+  * group of jobs that should be executed by the scheduler (if the queue
+  * is marked as active). The scheduler will execute a maximum of n jobs
+- * belonging to this queue at a time, where n can be set calling the 
++ * belonging to this queue at a time, where n can be set calling the
+  * setMaxSimultaneousJobs(int n)
+  *
+  */
+@@ -26,6 +26,8 @@
+ #include <QList>
+ #include "../kget_export.h"
+ 
++#include <boost/optional/optional.hpp>
++
+ class Job;
+ class Scheduler;
+ 
+@@ -90,8 +92,7 @@ class KGET_EXPORT JobQueue : public QObject
+         const QList<Job *> runningJobs();
+ 
+         /**
+-         * FIXME not implemented
+-         * Sets the maximum number of jobs belonging to this queue that 
++         * Sets the maximum number of jobs belonging to this queue that
+          * should executed simultaneously by the scheduler
+          *
+          * @param n The maximum number of jobs
+@@ -102,7 +103,12 @@ class KGET_EXPORT JobQueue : public QObject
+          * @return the maximum number of jobs the scheduler should ever
+          * execute simultaneously (in this queue).
+          */
+-        int maxSimultaneousJobs() const;
++        virtual int maxSimultaneousJobs() const;
++
++        bool hasOwnMaxSimultaneousJobs() const
++        {
++            return m_maxSimultaneousJobs;
++        }
+ 
+     protected:
+         /**
+@@ -161,7 +167,7 @@ class KGET_EXPORT JobQueue : public QObject
+     private:
+         QList<Job *> m_jobs;
+ 
+-        int m_maxSimultaneousJobs;
++        boost::optional<int> m_maxSimultaneousJobs;
+ 
+         Scheduler * m_scheduler;
+         Status m_status;
+diff --git a/core/transfergroup.cpp b/core/transfergroup.cpp
+index c94cabd..9425d53 100644
+--- a/core/transfergroup.cpp
++++ b/core/transfergroup.cpp
+@@ -332,6 +332,11 @@ void TransferGroup::save(QDomElement e) // krazy:exclude=passbyvalue
+     e.setAttribute("Icon", m_iconName);
+     e.setAttribute("Status", status() == JobQueue::Running ? "Running" : "Stopped");
+     e.setAttribute("RegExpPattern", m_regExp.pattern());
++    if (this->hasOwnMaxSimultaneousJobs()) {
++        e.setAttribute("MaxSimultaneousJobs", this->maxSimultaneousJobs());
++    } else {
++        e.removeAttribute("MaxSimultaneousJobs");
++    }
+ 
+ #ifdef HAVE_NEPOMUK
+     QDomElement tags = e.ownerDocument().createElement("Tags");
+@@ -376,6 +381,11 @@ void TransferGroup::load(const QDomElement & e)
+ 
+     m_regExp.setPattern(e.attribute("RegExpPattern"));
+ 
++    const int maxSimultaneousJobs = e.attribute("MaxSimultaneousJobs").toInt();
++    if (maxSimultaneousJobs) {
++        this->setMaxSimultaneousJobs(maxSimultaneousJobs);
++    }
++
+ #ifdef HAVE_NEPOMUK
+     QDomNodeList tagsNodeList = e.elementsByTagName("Tags").at(0).toElement().elementsByTagName("Tag");
+     for( uint i = 0; i < tagsNodeList.length(); ++i )
+diff --git a/core/transfergroup.h b/core/transfergroup.h
+index 0e97297..5d46c1c 100644
+--- a/core/transfergroup.h
++++ b/core/transfergroup.h
+@@ -163,7 +163,7 @@ class KGET_EXPORT TransferGroup : public JobQueue
+         const QString & name()    {return m_name;}
+ 
+         /**
+-         * @return the sum of the sizes of the transfers belonging to 
++         * @return the sum of the sizes of the transfers belonging to
+          * this group
+          */
+         int totalSize() const     {return m_totalSize;}
+@@ -186,13 +186,13 @@ class KGET_EXPORT TransferGroup : public JobQueue
+         int percent() const       {return m_percent;}
+ 
+         /**
+-         * @return the sum of the download speeds of the running transfers 
++         * @return the sum of the download speeds of the running transfers
+          * belonging this group
+          */
+         int downloadSpeed();
+ 
+         /**
+-         * @return the sum of the download speeds of the running transfers 
++         * @return the sum of the download speeds of the running transfers
+          * belonging this group
+          */
+         int uploadSpeed();
+@@ -303,7 +303,7 @@ class KGET_EXPORT TransferGroup : public JobQueue
+         void calculateUploadLimit();
+ 
+         /**
+-         * Saves this group object to the given QDomNode 
++         * Saves this group object to the given QDomNode
+          *
+          * @param n The QDomNode where the group will be saved
+          */
+diff --git a/core/transfergrouphandler.h b/core/transfergrouphandler.h
+index 878eafe..624eca7 100644
+--- a/core/transfergrouphandler.h
++++ b/core/transfergrouphandler.h
+@@ -60,7 +60,21 @@ class KGET_EXPORT TransferGroupHandler : public Handler
+          *
+          * @param n The maximum number of jobs
+          */
+-        void setMaxSimultaneousJobs(int n);
++        void setMaxSimultaneousJobs(int n)
++        {
++            m_group->setMaxSimultaneousJobs(n);
++        }
++
++
++        int maxSimultaneousJobs() const
++        {
++            return m_group->maxSimultaneousJobs();
++        }
++
++        bool hasOwnMaxSimultaneousJobs() const
++        {
++            return m_group->hasOwnMaxSimultaneousJobs();
++        }
+ 
+         /**
+          * @returns the Job in the queue at the given index i
+diff --git a/ui/groupsettingsdialog.cpp b/ui/groupsettingsdialog.cpp
+index e688340..e390a7d 100644
+--- a/ui/groupsettingsdialog.cpp
++++ b/ui/groupsettingsdialog.cpp
+@@ -49,6 +49,10 @@ GroupSettingsDialog::GroupSettingsDialog(QWidget *parent, TransferGroupHandler *
+     ui.nepomukWidget->hide();
+ #endif
+ 
++    if (group->hasOwnMaxSimultaneousJobs()) {
++        ui.jobBox->setValue(group->maxSimultaneousJobs());
++    }
++
+     connect(this, SIGNAL(accepted()), SLOT(save()));
+ }
+ 
+@@ -82,6 +86,8 @@ void GroupSettingsDialog::save()
+ #ifdef HAVE_NEPOMUK
+     m_group->setTags(m_tagWidget->selectedTags());
+ #endif
++
++    m_group->setMaxSimultaneousJobs(ui.jobBox->value());
+ }
+ 
+ #include "groupsettingsdialog.moc"
+diff --git a/ui/groupsettingsdialog.ui b/ui/groupsettingsdialog.ui
+index 1fb0bd9..f71e29e 100644
+--- a/ui/groupsettingsdialog.ui
++++ b/ui/groupsettingsdialog.ui
+@@ -133,6 +133,29 @@
+        </property>
+       </widget>
+      </item>
++     <item row="4" column="0">
++      <widget class="QLabel" name="label_5">
++       <property name="text">
++        <string>Maximum download per group:</string>
++       </property>
++       <property name="buddy">
++        <cstring>jobBox</cstring>
++       </property>
++      </widget>
++     </item>
++     <item row="4" column="1">
++      <widget class="QSpinBox" name="jobBox">
++       <property name="sizePolicy">
++        <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
++         <horstretch>0</horstretch>
++         <verstretch>0</verstretch>
++        </sizepolicy>
++       </property>
++       <property name="specialValueText">
++        <string>Not set</string>
++       </property>
++      </widget>
++     </item>
+     </layout>
+    </item>
+    <item>
+-- 
+2.2.2
+

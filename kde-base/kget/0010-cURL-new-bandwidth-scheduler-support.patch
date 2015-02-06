@@ -1,0 +1,495 @@
+From faa81b25653e1b69275348bf809f91e6467b9836 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Fri, 6 Feb 2015 18:16:13 +0900
+Subject: [PATCH] Squashed commit of the following:
+
+commit fdb0d6051d0ebb638728bb0f31212593c7df9835
+Author: stream <stream009@gmail.com>
+Date:   Wed Dec 31 14:49:43 2014 +0900
+
+    Minor optimization & clean up
+
+commit 5bb1013643b892c673f6c6ab940ab572cc07479d
+Author: stream <stream009@gmail.com>
+Date:   Tue Dec 30 13:33:19 2014 +0900
+
+    New bandwidth limiter
+
+commit 32f209ab1786697a96f3a84c4922c01b824390ec
+Author: stream <stream009@gmail.com>
+Date:   Sat Dec 27 20:40:41 2014 +0900
+
+    Add support for kget's bandwidth scheduler
+---
+ transfer-plugins/curl/curlthread.cpp        | 51 +++++++++-------
+ transfer-plugins/curl/curlthread.h          |  2 +
+ transfer-plugins/curl/curlthread_p.h        | 94 +++++++++++++++++++++++++++--
+ transfer-plugins/curl/curltransfer.cpp      | 24 +++++++-
+ transfer-plugins/curl/curltransfer.h        |  1 +
+ transfer-plugins/curl/kcm_widget.ui         | 31 ++--------
+ transfer-plugins/curl/kcmwidget.cpp         |  3 -
+ transfer-plugins/curl/kget_curlfactory.kcfg |  3 -
+ 8 files changed, 146 insertions(+), 63 deletions(-)
+
+diff --git a/transfer-plugins/curl/curlthread.cpp b/transfer-plugins/curl/curlthread.cpp
+index 201647e..4454d67 100644
+--- a/transfer-plugins/curl/curlthread.cpp
++++ b/transfer-plugins/curl/curlthread.cpp
+@@ -3,6 +3,7 @@
+ #include "curl.h"
+ #include "settings.h"
+ 
++#include <ctime>
+ #include <string>
+ 
+ #include <boost/algorithm/string/classification.hpp>
+@@ -49,6 +50,12 @@ void CurlThread::cancel() // nothrow()
+     m_private->cancel();
+ }
+ 
++void CurlThread::
++setSpeedLimit(const int speedKBps)
++{
++    m_private->setSpeedLimit(speedKBps);
++}
++
+ /*
+  * CurlThread::Private implementation
+  */
+@@ -60,10 +67,8 @@ CurlThread::Private::Private(CurlThread &parent,
+       m_cancel(false),
+       m_offset(0),
+       m_written(0),
+-      m_speedLimit(CurlSettings::downloadLimit() * 1024),
+       m_updateInterval(CurlSettings::updateInterval()),
+-      m_curl(src),
+-      m_serverSuppliedFilename()
++      m_curl(src)
+ {
+     kDebug(5001) << "src:" << src << ", dest:" << dest;
+ 
+@@ -98,8 +103,8 @@ void CurlThread::Private::run()
+     }
+ 
+     KUrl destUrl = m_dest;
+-    if (!m_serverSuppliedFilename.isNull()) {
+-        destUrl.setFileName(m_serverSuppliedFilename);
++    if (m_serverSuppliedFilename) {
++        destUrl.setFileName(m_serverSuppliedFilename.value());
+     }
+ 
+     const QString &destPath = destUrl.path();
+@@ -135,15 +140,15 @@ void CurlThread::Private::prepareDestination(const QString &path)
+     if (!fileInfo.exists()) return;
+ 
+     kDebug(5001) << "destination file already exists.";
+-    qint64 size = fileInfo.size();
++    const qint64 size = fileInfo.size();
+     assert(m_contentLength);
+     if (size < m_contentLength.value()) {
+         kDebug(5001) << "resume from point:" << size;
+         m_offset = size;
+     }
+     else {
+-        kDebug(5001) << "Existing destination file is larger or "
+-                        "equal than content length.";
++        kDebug(5001) << "Existing destination file is larger than "
++                        "or equal to content length.";
+         if (!QFile::remove(path)) {
+             kDebug(5001) << "Fail to remove unwanted existing "
+                             "destination file.";
+@@ -186,6 +191,7 @@ void CurlThread::Private::fetchBody()
+     m_curl.setOption(CURLOPT_DEBUGFUNCTION, &debugCallback);
+     m_curl.setOption(CURLOPT_DEBUGDATA, this);
+ 
++    m_bandwidthRegulator.start();
+     m_curl.perform();
+ }
+ 
+@@ -319,34 +325,26 @@ int CurlThread::Private::progressCallback(void *data,
+     Progress* const progress = &obj->m_progress;
+ 
+     time_t now;
+-    if (time(&now) == -1) {
++    if (std::time(&now) == -1) {
+         using namespace boost::system;
+         throw system_error(errno, system_category());
+     }
+-    const curl_off_t dSec = now - progress->time;
++
++    const time_t dSec = now - progress->time;
+     if (dSec < obj->m_updateInterval) {
+         return CURLE_OK;
+     }
+ 
+-    if (obj->m_speedLimit) {
+-        kDebug(5001) << "limit download speed:" << obj->m_speedLimit;
+-        obj->m_curl.setOption(CURLOPT_MAX_RECV_SPEED_LARGE,
+-                        static_cast<curl_off_t>(obj->m_speedLimit));
+-    }
+-
+     const curl_off_t dSize = dlnow - progress->downloaded;
+-
+     progress->downloaded = dlnow;
+     progress->time = now;
+ 
+     const double speed = static_cast<double>(dSize / dSec);
+     const curl_off_t downloaded = obj->m_offset + progress->downloaded;
+-    assert(m_contentLength);
+-    const int eta =
+-        speed ? (obj->m_contentLength.value() - downloaded) / speed : 0;
+ 
+-    kDebug(5001) << downloaded << "/" << obj->m_contentLength.value()
+-                 << dlnow << dltotal << speed << eta;
++    kDebug(5001) << speed << downloaded << "/" << obj->m_contentLength.value()
++                 << dlnow << dltotal;
++
+     obj->emitProgress(downloaded, speed);
+ 
+     return CURLE_OK;
+@@ -359,12 +357,13 @@ size_t CurlThread::Private::writeCallback(char* const ptr, const size_t size,
+     Private* const obj = static_cast<Private*>(data);
+     obj->m_written += size * nmemb;
+ 
++    obj->m_bandwidthRegulator(size * nmemb);
++
+     return obj->m_file.write(ptr, size, nmemb);
+ }
+ 
+ void CurlThread::Private::slotConfigChanged()
+ {
+-    m_speedLimit = CurlSettings::downloadLimit() * 1024;
+     m_updateInterval = CurlSettings::updateInterval();
+     assert(m_updateInterval);
+ }
+@@ -414,5 +413,11 @@ debugCallback(CURL*, const curl_infotype type, char * const ptr,
+     return 0;
+ }
+ 
++void CurlThread::Private::
++setSpeedLimit(const int speedKBps)
++{
++    m_bandwidthRegulator.setLimit(speedKBps * 1024);
++}
++
+ #include "curlthread_p.moc"
+ #include "curlthread.moc"
+diff --git a/transfer-plugins/curl/curlthread.h b/transfer-plugins/curl/curlthread.h
+index 427024f..e9d8133 100644
+--- a/transfer-plugins/curl/curlthread.h
++++ b/transfer-plugins/curl/curlthread.h
+@@ -26,6 +26,8 @@ public:
+ 
+     void cancel(); //throw()
+ 
++    void setSpeedLimit(const int speedKBps);
++
+ signals:
+     void totalSize(const qlonglong) const;
+     void progress(const qlonglong downloaded, const double bytePerSec) const;
+diff --git a/transfer-plugins/curl/curlthread_p.h b/transfer-plugins/curl/curlthread_p.h
+index 9b784cd..6ea818c 100644
+--- a/transfer-plugins/curl/curlthread_p.h
++++ b/transfer-plugins/curl/curlthread_p.h
+@@ -4,14 +4,16 @@
+ #include "curlthread.h"
+ #include "curl.h"
+ 
++#include <algorithm>
+ #include <cstdio>
++#include <ctime>
++#include <limits>
+ 
+ #include <boost/optional/optional.hpp>
+ #include <boost/system/system_error.hpp>
+ 
+-#include <QObject>
+-
+-#include <time.h>
++#include <QtCore/QObject>
++#include <QtCore/QElapsedTimer>
+ 
+ struct Progress
+ {
+@@ -21,7 +23,7 @@ struct Progress
+     Progress()
+         : downloaded(0)
+     {
+-        if (::time(&this->time) == -1) {
++        if (std::time(&this->time) == -1) {
+             using namespace boost::system;
+             throw system_error(errno, system_category());
+         }
+@@ -60,6 +62,84 @@ private:
+     ::FILE *m_fp;
+ };
+ 
++class BandwidthRegulator
++{
++    struct DummyThread;
++public:
++    enum {
++        min = 16 * 1024, // due to cURL's buffer size
++        unlimited = UINT_MAX
++    };
++
++    BandwidthRegulator()
++        : m_limitBps(unlimited), m_windowSize(0), m_received(0)
++    {}
++
++    size_t limit() const { return m_limitBps; }
++
++    void setLimit(const size_t bytesPerSecond)
++    {
++        m_limitBps = bytesPerSecond == 0 ? unlimited : bytesPerSecond;
++
++        m_windowSize = m_limitBps == unlimited ? 0 :
++             static_cast<unsigned long long>(m_limitBps)
++                                        * windowTimeUs / 1000 / 1000;
++#if 0
++        fprintf(stderr, "m_limitBps = %u, m_windowSize = %u\n",
++                m_limitBps == unlimited ? 0 : m_limitBps, m_windowSize);
++#endif
++    }
++
++    void start() { m_timer.start(); }
++
++    void operator()(const size_t arrived)
++    {
++        if (m_limitBps == unlimited) {
++            m_received = 0;
++            return;
++        }
++
++        m_received += arrived;
++        if (m_received > m_windowSize) {
++            const size_t elapsed = m_timer.nsecsElapsed() / 1000;
++            const size_t targetTimeUs = m_limitBps == unlimited ? 0 :
++                             static_cast<unsigned long long>(m_received)
++                                      * 1000 * 1000 / m_limitBps;
++
++            if (elapsed < targetTimeUs) {
++                const size_t sleepTimeUs = targetTimeUs - elapsed;
++#if 0
++                fprintf(stderr, "%10u / %10u / %10u : %6u, %6u\n",
++                    elapsed,
++                    targetTimeUs,
++                    sleepTimeUs,
++                    m_received,
++                    m_windowSize
++                );
++#endif
++                DummyThread::usleep(
++                        std::min<size_t>(sleepTimeUs, maxSleepTimeUs));
++            }
++
++            m_received = 0;
++            m_timer.start();
++        }
++    }
++
++private:
++    // This is necessary because QThread::usleep() is protected.
++    struct DummyThread : public QThread {
++        static void usleep(const size_t usecs) { QThread::usleep(usecs); }
++    };
++
++    enum { windowTimeUs = 100 * 1000, maxSleepTimeUs = 1000 * 1000 };
++
++    size_t m_limitBps;
++    size_t m_windowSize;
++    size_t m_received;
++    QElapsedTimer m_timer;
++};
++
+ class CurlThread::Private : public QObject, private boost::noncopyable
+ {
+     Q_OBJECT
+@@ -97,6 +177,8 @@ public:
+ 
+     void printRequest(const boost::string_ref &);
+ 
++    void setSpeedLimit(const int speedKBps);
++
+ private slots:
+     void slotConfigChanged();
+ 
+@@ -110,10 +192,10 @@ private:
+     qlonglong m_offset;
+     File m_file;
+     qlonglong m_written;
+-    qlonglong m_speedLimit;
+     size_t m_updateInterval;
+     Curl m_curl;
+-    QString m_serverSuppliedFilename;
++    boost::optional<QString> m_serverSuppliedFilename;
++    BandwidthRegulator m_bandwidthRegulator;
+ };
+ 
+ #endif // CURLTHREAD_P_H
+diff --git a/transfer-plugins/curl/curltransfer.cpp b/transfer-plugins/curl/curltransfer.cpp
+index 9d15583..2fc98c7 100644
+--- a/transfer-plugins/curl/curltransfer.cpp
++++ b/transfer-plugins/curl/curltransfer.cpp
+@@ -2,6 +2,8 @@
+ 
+ #include "curlthread.h"
+ 
++#include <boost/optional.hpp>
++
+ #include <KDebug>
+ #include <KLocalizedString>
+ 
+@@ -11,7 +13,8 @@ CurlTransfer::CurlTransfer(TransferGroup *parent, TransferFactory *factory,
+     : Transfer(parent, factory, scheduler, src, dest, e)
+ {
+     kDebug(5001) << "src:" << src << ", dest:" << dest;
+-    setCapabilities(Transfer::Cap_Moving | Transfer::Cap_Resuming);
++    setCapabilities(Transfer::Cap_Moving | Transfer::Cap_Resuming
++                                         | Transfer::Cap_SpeedLimit);
+ }
+ 
+ CurlTransfer::~CurlTransfer()
+@@ -86,6 +89,23 @@ void CurlTransfer::deinit(Transfer::DeleteOptions options)
+     }
+ }
+ 
++void CurlTransfer::
++setSpeedLimits(const int, const int downloadLimitKBps)
++{
++    kDebug(5001) << downloadLimitKBps;
++
++    if (m_curlThread && m_curlThread->isRunning()) {
++        // Speeding up slowly. Otherwise it will jump up way too high
++        // and keep bouncing up and down.
++        // Speeding down won't need such a concern.
++        const size_t newLimit =
++            downloadLimitKBps > m_downloadSpeed / 1024
++                ? m_downloadSpeed * 1.5 / 1024 : downloadLimitKBps;
++
++        m_curlThread->setSpeedLimit(newLimit);
++    }
++}
++
+ void CurlTransfer::slotTotalSize(const qlonglong size)
+ {
+     kDebug(5001) << size;
+@@ -100,7 +120,9 @@ void CurlTransfer::slotProgress(const qlonglong downloaded,
+     this->m_downloadedSize = downloaded;
+     assert(m_totalSize);
+     this->m_percent = (this->m_downloadedSize * 100) / m_totalSize;
++
+     this->m_downloadSpeed = speed;
++
+     this->setTransferChange(Tc_DownloadedSize | Tc_Percent |
+                                                 Tc_DownloadSpeed, true);
+ }
+diff --git a/transfer-plugins/curl/curltransfer.h b/transfer-plugins/curl/curltransfer.h
+index 9a70e81..11acba3 100644
+--- a/transfer-plugins/curl/curltransfer.h
++++ b/transfer-plugins/curl/curltransfer.h
+@@ -26,6 +26,7 @@ private:
+     virtual void stop();  // throw()
+     // @override Transfer
+     virtual void deinit(Transfer::DeleteOptions options); // throw()
++    virtual void setSpeedLimits(int uploadLimit, int downloadLimit); // throw()
+ 
+ private slots:
+     void slotTotalSize(const qlonglong);
+diff --git a/transfer-plugins/curl/kcm_widget.ui b/transfer-plugins/curl/kcm_widget.ui
+index da7dbea..49044df 100644
+--- a/transfer-plugins/curl/kcm_widget.ui
++++ b/transfer-plugins/curl/kcm_widget.ui
+@@ -7,7 +7,7 @@
+     <x>0</x>
+     <y>0</y>
+     <width>400</width>
+-    <height>74</height>
++    <height>44</height>
+    </rect>
+   </property>
+   <property name="windowTitle">
+@@ -16,6 +16,9 @@
+   <layout class="QVBoxLayout" name="verticalLayout_2">
+    <item>
+     <layout class="QFormLayout" name="formLayout">
++     <property name="fieldGrowthPolicy">
++      <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
++     </property>
+      <item row="0" column="0">
+       <widget class="QLabel" name="label">
+        <property name="text">
+@@ -36,32 +39,6 @@
+        </property>
+       </widget>
+      </item>
+-     <item row="1" column="0">
+-      <widget class="QLabel" name="label_2">
+-       <property name="text">
+-        <string>Download Speed Limit:</string>
+-       </property>
+-       <property name="buddy">
+-        <cstring>m_downloadLimit</cstring>
+-       </property>
+-      </widget>
+-     </item>
+-     <item row="1" column="1">
+-      <widget class="QSpinBox" name="m_downloadLimit">
+-       <property name="specialValueText">
+-        <string>Unlimited</string>
+-       </property>
+-       <property name="suffix">
+-        <string> KiB</string>
+-       </property>
+-       <property name="maximum">
+-        <number>1000000</number>
+-       </property>
+-       <property name="singleStep">
+-        <number>100</number>
+-       </property>
+-      </widget>
+-     </item>
+     </layout>
+    </item>
+   </layout>
+diff --git a/transfer-plugins/curl/kcmwidget.cpp b/transfer-plugins/curl/kcmwidget.cpp
+index ad9f72e..5e2c4a4 100644
+--- a/transfer-plugins/curl/kcmwidget.cpp
++++ b/transfer-plugins/curl/kcmwidget.cpp
+@@ -10,20 +10,17 @@ KcmWidget::KcmWidget(QWidget* const parent, const QVariantList &args)
+     : KCModule(KGetFactory::componentData(), parent, args)
+ {
+     ui.setupUi(this);
+-    connect(ui.m_downloadLimit, SIGNAL(valueChanged(int)), SLOT(changed()));
+ }
+ 
+ void KcmWidget::load()
+ {
+     kDebug(5001) << "Loading cURL config";
+     ui.m_updateInterval->setValue(CurlSettings::updateInterval());
+-    ui.m_downloadLimit->setValue(CurlSettings::downloadLimit());
+ }
+ 
+ void KcmWidget::save()
+ {
+     kDebug(5001) << "Saving cURL config";
+     CurlSettings::setUpdateInterval(ui.m_updateInterval->value());
+-    CurlSettings::setDownloadLimit(ui.m_downloadLimit->value());
+     CurlSettings::self()->writeConfig();
+ }
+diff --git a/transfer-plugins/curl/kget_curlfactory.kcfg b/transfer-plugins/curl/kget_curlfactory.kcfg
+index 0970801..b43f50a 100644
+--- a/transfer-plugins/curl/kget_curlfactory.kcfg
++++ b/transfer-plugins/curl/kget_curlfactory.kcfg
+@@ -8,8 +8,5 @@
+     <entry name="UpdateInterval" type="Int">
+       <default>1</default>
+     </entry>
+-    <entry name="DownloadLimit" type="Int">
+-      <default>0</default>
+-    </entry>
+   </group>
+ </kcfg>
+-- 
+2.2.2
+

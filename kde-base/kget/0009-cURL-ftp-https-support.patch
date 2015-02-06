@@ -1,0 +1,317 @@
+From 6f553753579ddce90c25858e22dd0eac6e977856 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Sun, 21 Dec 2014 21:12:17 +0900
+Subject: [PATCH] Add ftp, https support
+
+---
+ transfer-plugins/curl/curlthread.cpp          | 93 +++++++++++++++++++--------
+ transfer-plugins/curl/curlthread_p.h          | 18 ++++--
+ transfer-plugins/curl/curltransfer.cpp        |  2 +
+ transfer-plugins/curl/curltransferfactory.cpp |  3 +-
+ 4 files changed, 82 insertions(+), 34 deletions(-)
+
+diff --git a/transfer-plugins/curl/curlthread.cpp b/transfer-plugins/curl/curlthread.cpp
+index b5810bc..201647e 100644
+--- a/transfer-plugins/curl/curlthread.cpp
++++ b/transfer-plugins/curl/curlthread.cpp
+@@ -12,6 +12,7 @@
+ #include <boost/format.hpp>
+ #include <boost/lexical_cast.hpp>
+ #include <boost/regex.hpp>
++#include <boost/utility/string_ref.hpp>
+ 
+ #include <KUrl>
+ #include <KDebug>
+@@ -57,7 +58,6 @@ CurlThread::Private::Private(CurlThread &parent,
+       m_src(src),
+       m_dest(dest),
+       m_cancel(false),
+-      m_contentLength(0),
+       m_offset(0),
+       m_written(0),
+       m_speedLimit(CurlSettings::downloadLimit() * 1024),
+@@ -67,7 +67,9 @@ CurlThread::Private::Private(CurlThread &parent,
+ {
+     kDebug(5001) << "src:" << src << ", dest:" << dest;
+ 
+-    if (m_src.scheme() != "http") {
++    if (m_src.scheme() != "http" && m_src.scheme() != "https"
++                                 && m_src.scheme() != "ftp")
++    {
+         throw UnsupportedProtocol(m_src);
+     }
+     if (!m_dest.isLocalFile()) {
+@@ -91,6 +93,9 @@ void CurlThread::Private::run()
+                  << "dest:" << m_dest.fileName().toLocal8Bit();
+ 
+     fetchHeader();
++    if (!m_contentLength) {
++        throw BadHeader("Content-Length", "none");
++    }
+ 
+     KUrl destUrl = m_dest;
+     if (!m_serverSuppliedFilename.isNull()) {
+@@ -131,7 +136,8 @@ void CurlThread::Private::prepareDestination(const QString &path)
+ 
+     kDebug(5001) << "destination file already exists.";
+     qint64 size = fileInfo.size();
+-    if (size < m_contentLength) {
++    assert(m_contentLength);
++    if (size < m_contentLength.value()) {
+         kDebug(5001) << "resume from point:" << size;
+         m_offset = size;
+     }
+@@ -150,7 +156,10 @@ void CurlThread::Private::fetchHeader()
+ {
+     m_curl.reset();
+ 
+-    m_curl.setOption(CURLOPT_HEADERFUNCTION, &headerCallback);
++    m_curl.setOption(CURLOPT_HEADERFUNCTION,
++        m_src.scheme() == "http"  ? &httpHeaderCallback :
++        m_src.scheme() == "https" ? &httpHeaderCallback :
++        m_src.scheme() == "ftp"   ? &ftpHeaderCallback  : NULL);
+     m_curl.setOption(CURLOPT_HEADERDATA, this);
+     m_curl.setOption(CURLOPT_NOBODY, 1);
+     m_curl.setOption(CURLOPT_FOLLOWLOCATION, 1);
+@@ -196,20 +205,23 @@ void CurlThread::Private::emitProgress(const qlonglong downloaded,
+     emit m_public.progress(downloaded, speed);
+ }
+ 
+-void CurlThread::Private::emitLog(const std::string &line) const
++void CurlThread::Private::emitLog(const boost::string_ref &line) const
+ {
+-    const QString &trimmed = QString::fromUtf8(line.c_str()).trimmed();
++    const QString &trimmed =
++        QString::fromUtf8(line.data(), line.size()).trimmed();
+     if (trimmed.isEmpty()) return;
+ 
+     emit m_public.log(trimmed);
+ }
+ 
+-size_t CurlThread::Private::headerCallback(char* const ptr, const size_t size,
+-                                           const size_t nmemb, void* const o)
++size_t CurlThread::Private::
++httpHeaderCallback(char* const ptr, const size_t size,
++                   const size_t nmemb, void* const o)
+ {
+     Private* const obj = static_cast<Private*>(o);
+-    const std::string line(ptr, size*nmemb);
++    const boost::string_ref line(ptr, size*nmemb);
+ 
++    kDebug(5001) << line.to_string().c_str();
+     bool handled = obj->handleContentLength(line);
+     if (!handled) {
+         handled = obj->handleContentDisposition(line);
+@@ -218,20 +230,47 @@ size_t CurlThread::Private::headerCallback(char* const ptr, const size_t size,
+     return size*nmemb;
+ }
+ 
+-bool CurlThread::Private::handleContentLength(const std::string &line)
++size_t CurlThread::Private::
++ftpHeaderCallback(char* const ptr, const size_t size,
++                  const size_t nmemb, void* const o)
++{
++    Private* const obj = static_cast<Private*>(o);
++    const boost::string_ref line(ptr, size*nmemb);
++
++    kDebug(5001) << line.to_string().c_str();
++    static const boost::regex sizeRe("213\\s+(\\d+)\\r\\n");
++    boost::cmatch result;
++    if (boost::regex_match(line.begin(), line.end(), result, sizeRe)) {
++        const boost::string_ref value(result[1].first,
++                                      result[1].second - result[1].first);
++        try {
++            obj->m_contentLength = boost::lexical_cast<qlonglong>(value);
++            obj->emitTotalSize(obj->m_contentLength.value());
++        }
++        catch (const boost::bad_lexical_cast &e) {
++            throw BadHeader("SIZE", value.to_string());
++        }
++    }
++
++    return size*nmemb;
++}
++
++bool CurlThread::Private::
++handleContentLength(const boost::string_ref &line)
+ {
+     static const boost::regex contentLengthRe(
+         "Content-Length\\s*:\\s*([0-9]+)\\s*\\r\\n", boost::regex::icase);
+     boost::cmatch result;
+-    if (regex_match(line.c_str(), result, contentLengthRe)) {
+-        kDebug(5001) << line.c_str();
+-        std::string value(result[1].first, result[1].second);
++    if (regex_match(line.begin(), line.end(), result, contentLengthRe)) {
++        kDebug(5001) << line.to_string().c_str();
++        const boost::string_ref value(result[1].first,
++                                      result[1].second - result[1].first);
+         try {
+-            this->m_contentLength = boost::lexical_cast<qlonglong>(value);
+-            this->emitTotalSize(this->m_contentLength);
++            m_contentLength = boost::lexical_cast<qlonglong>(value);
++            emitTotalSize(m_contentLength.value());
+         }
+         catch (const boost::bad_lexical_cast &e) {
+-            throw BadHeader("Content-Length", value);
++            throw BadHeader("Content-Length", value.to_string());
+         }
+         return true;
+     }
+@@ -240,12 +279,13 @@ bool CurlThread::Private::handleContentLength(const std::string &line)
+     }
+ }
+ 
+-bool CurlThread::Private::handleContentDisposition(const std::string &line)
++bool CurlThread::Private::
++handleContentDisposition(const boost::string_ref &line)
+ {
+     if (!boost::algorithm::istarts_with(line, "Content-Disposition")) {
+         return false;
+     }
+-    kDebug(5001) << line.c_str();
++    kDebug(5001) << line.to_string().c_str();
+ 
+     const boost::optional<ContentDisposition>
+                     contentDisposition = parse(line.data(), line.size());
+@@ -301,10 +341,11 @@ int CurlThread::Private::progressCallback(void *data,
+ 
+     const double speed = static_cast<double>(dSize / dSec);
+     const curl_off_t downloaded = obj->m_offset + progress->downloaded;
+-    const int eta = speed ? (obj->m_contentLength - downloaded) / speed
+-                          : 0;
++    assert(m_contentLength);
++    const int eta =
++        speed ? (obj->m_contentLength.value() - downloaded) / speed : 0;
+ 
+-    kDebug(5001) << downloaded << "/" << obj->m_contentLength
++    kDebug(5001) << downloaded << "/" << obj->m_contentLength.value()
+                  << dlnow << dltotal << speed << eta;
+     obj->emitProgress(downloaded, speed);
+ 
+@@ -329,9 +370,9 @@ void CurlThread::Private::slotConfigChanged()
+ }
+ 
+ void CurlThread::Private::
+-printRequest(const std::string &request)
++printRequest(const boost::string_ref &request)
+ {
+-    typedef std::string::const_iterator Iterator;
++    typedef boost::string_ref::const_iterator Iterator;
+     typedef boost::iterator_range<Iterator> Range;
+     typedef boost::split_iterator<Iterator> SplitIt;
+     SplitIt it = boost::make_split_iterator(request,
+@@ -339,7 +380,7 @@ printRequest(const std::string &request)
+     for (; !it.eof(); ++it) {
+         const Range &line = *it;
+         if (line.empty()) continue;
+-        emitLog(str(boost::format("HTTP Request: %s") % line));
++        emitLog(str(boost::format("Outgoing Header: %s") % line));
+     }
+ }
+ 
+@@ -348,14 +389,14 @@ debugCallback(CURL*, const curl_infotype type, char * const ptr,
+     const size_t size, void * const data)
+ {
+     Private* const obj = static_cast<Private*>(data);
+-    const std::string text(ptr, size);
++    const boost::string_ref text(ptr, size);
+ 
+     switch (type) {
+     case CURLINFO_TEXT:
+         obj->emitLog(text);
+         break;
+     case CURLINFO_HEADER_IN:
+-        obj->emitLog(str(boost::format("HTTP Response: %s") % text));
++        obj->emitLog(str(boost::format("Incoming Header: %s") % text));
+         break;
+     case CURLINFO_HEADER_OUT:
+         obj->printRequest(text);
+diff --git a/transfer-plugins/curl/curlthread_p.h b/transfer-plugins/curl/curlthread_p.h
+index 6c47638..9b784cd 100644
+--- a/transfer-plugins/curl/curlthread_p.h
++++ b/transfer-plugins/curl/curlthread_p.h
+@@ -6,6 +6,7 @@
+ 
+ #include <cstdio>
+ 
++#include <boost/optional/optional.hpp>
+ #include <boost/system/system_error.hpp>
+ 
+ #include <QObject>
+@@ -77,13 +78,16 @@ public:
+     void emitTotalSize(const qlonglong size) const;
+     void emitProgress(const qlonglong downloaded,
+                       const double bytePerSec) const;
+-    void emitLog(const std::string &line) const;
++    void emitLog(const boost::string_ref &line) const;
+ 
+-    bool handleContentLength(const std::string &line);
+-    bool handleContentDisposition(const std::string &line);
++    bool handleContentLength(const boost::string_ref &line);
++    bool handleContentDisposition(const boost::string_ref &line);
++
++    static size_t httpHeaderCallback(char* const ptr, const size_t size,
++                                     const size_t nmemb, void* const);
++    static size_t ftpHeaderCallback(char* const ptr, const size_t size,
++                                    const size_t nmemb, void* const);
+ 
+-    static size_t headerCallback(char* const ptr, const size_t size,
+-                                 const size_t nmemb, void* const);
+     static int progressCallback(void *data, curl_off_t dltotal,
+                                 curl_off_t dlnow, curl_off_t, curl_off_t);
+     static size_t writeCallback(char* const ptr, const size_t size,
+@@ -91,7 +95,7 @@ public:
+     static size_t debugCallback(CURL*, curl_infotype , char * const ptr,
+                                 const size_t size, void * const data);
+ 
+-    void printRequest(const std::string &);
++    void printRequest(const boost::string_ref &);
+ 
+ private slots:
+     void slotConfigChanged();
+@@ -102,7 +106,7 @@ private:
+     KUrl m_dest;
+     Progress m_progress;
+     bool m_cancel;
+-    qlonglong m_contentLength;
++    boost::optional<qlonglong> m_contentLength;
+     qlonglong m_offset;
+     File m_file;
+     qlonglong m_written;
+diff --git a/transfer-plugins/curl/curltransfer.cpp b/transfer-plugins/curl/curltransfer.cpp
+index cfd0745..9d15583 100644
+--- a/transfer-plugins/curl/curltransfer.cpp
++++ b/transfer-plugins/curl/curltransfer.cpp
+@@ -98,6 +98,7 @@ void CurlTransfer::slotProgress(const qlonglong downloaded,
+ {
+     kDebug(5001) << downloaded << speed;
+     this->m_downloadedSize = downloaded;
++    assert(m_totalSize);
+     this->m_percent = (this->m_downloadedSize * 100) / m_totalSize;
+     this->m_downloadSpeed = speed;
+     this->setTransferChange(Tc_DownloadedSize | Tc_Percent |
+@@ -109,6 +110,7 @@ void CurlTransfer::slotFinished(const qlonglong downloaded)
+     kDebug(5001) << downloaded << this->m_totalSize;
+     this->setStatus(Job::Finished);
+     this->m_downloadedSize = downloaded;
++    assert(m_totalSize);
+     this->m_percent = (downloaded / this->m_totalSize) * 100;
+     this->m_downloadSpeed = 0;
+     this->setTransferChange(Tc_Status | Tc_DownloadedSize |
+diff --git a/transfer-plugins/curl/curltransferfactory.cpp b/transfer-plugins/curl/curltransferfactory.cpp
+index 746f114..d678db6 100644
+--- a/transfer-plugins/curl/curltransferfactory.cpp
++++ b/transfer-plugins/curl/curltransferfactory.cpp
+@@ -31,7 +31,8 @@ createTransferHandler(Transfer * const transfer, Scheduler * const scheduler)
+ 
+ bool CurlTransferFactory::isSupported(const KUrl &url) const
+ {
+-    static const QStringList protocols = QStringList() << "http";
++    static const QStringList protocols =
++                 QStringList() << "http" << "https" << "ftp";
+ 
+     QString protocol = url.protocol();
+     kDebug(5001) << "Protocol:" << protocol;
+-- 
+2.2.2
+

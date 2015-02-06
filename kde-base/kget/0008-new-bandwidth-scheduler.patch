@@ -1,0 +1,1065 @@
+From abc47b672a4c2411ba2e5beed27a0ae5f3ffe4b0 Mon Sep 17 00:00:00 2001
+From: stream <stream009@gmail.com>
+Date: Fri, 6 Feb 2015 18:05:09 +0900
+Subject: [PATCH] Squashed commit of the following:
+
+commit 218429f600ae0b0ed1cebcf169c57f2af731a4cd
+Author: stream <stream009@gmail.com>
+Date:   Sat Dec 27 17:24:22 2014 +0900
+
+    Add test suite
+
+commit 08139ed1e1b178cc7e1426bd43b3fa1937a2a0fb
+Author: stream <stream009@gmail.com>
+Date:   Sat Dec 27 17:23:16 2014 +0900
+
+    Further improvement of algorithm
+
+commit 0b6643198bbe937e7607205ac8d3e9117a993687
+Author: stream <stream009@gmail.com>
+Date:   Thu Dec 25 02:59:14 2014 +0900
+
+    Improve speed calculation algorithm.
+
+commit 739026991f81c5ebc9a8fd704b6501c1e5ca106f
+Author: stream <stream009@gmail.com>
+Date:   Wed Dec 24 16:53:24 2014 +0900
+
+    Factor out speed calculation logic
+---
+ CMakeLists.txt                  |   1 +
+ core/bandwidthlimiter.cpp       |  47 ++++
+ core/bandwidthlimiter.h         |  99 ++++++++
+ core/transfergroup.cpp          | 112 +++------
+ core/transfergroupscheduler.cpp |  91 ++------
+ tests/CMakeLists.txt            |  14 ++
+ tests/bandwidthlimitertest.cpp  | 497 ++++++++++++++++++++++++++++++++++++++++
+ tests/bandwidthlimitertest.h    |  54 +++++
+ 8 files changed, 763 insertions(+), 152 deletions(-)
+ create mode 100644 core/bandwidthlimiter.cpp
+ create mode 100644 core/bandwidthlimiter.h
+ create mode 100644 tests/bandwidthlimitertest.cpp
+ create mode 100644 tests/bandwidthlimitertest.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 769829f..667f36a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -168,6 +168,7 @@ set(kgetcore_SRCS
+    core/mostlocalurl.cpp
+    core/filedeleter.cpp
+    core/logging.cpp
++   core/bandwidthlimiter.cpp
+ )
+ 
+ if(HAVE_NEPOMUK)
+diff --git a/core/bandwidthlimiter.cpp b/core/bandwidthlimiter.cpp
+new file mode 100644
+index 0000000..6b7e827
+--- /dev/null
++++ b/core/bandwidthlimiter.cpp
+@@ -0,0 +1,47 @@
++#include "bandwidthlimiter.h"
++
++#include <KDE/KDebug>
++
++int
++adjustSpeedLimit(std::vector<int> &speeds, const int speedLimit)
++{
++    assert(std::accumulate(speeds.begin(), speeds.end(), 0) >
++                           static_cast<int>(speedLimit * speeds.size()));
++
++    typedef std::vector<int>::iterator It;
++
++    It begin = speeds.begin();
++    It end = speeds.end();
++    int newLimit = speedLimit;
++    std::sort(begin, end); // prepare for binary search
++
++    size_t roundOffError = 0;
++    while (true) {
++        It boundary = std::lower_bound(begin, end, newLimit);
++        // All speed is above the limit
++        if (boundary == begin) break;
++
++        // Summary of speed differences between speed limit and lower speed
++        const int lowerSum = std::accumulate(begin, boundary, 0);
++        const int lowerSize = std::distance(begin, boundary);
++        const int diff = newLimit * lowerSize - lowerSum + roundOffError;
++
++        // Apply difference to new speed limit
++        const int upperSize = std::distance(boundary, end);
++        assert(upperSize != 0);
++        const int increment = diff / upperSize;
++        roundOffError = diff - increment * upperSize;
++        newLimit += increment;
++
++        // Narrow next search to the upper range of speeds
++        begin = boundary;
++#if 0
++        kDebug(5001) << QString::fromUtf8("%1, %2, %3, %4, %5")
++                            .arg(lowerSum).arg(lowerSize)
++                            .arg(upperSize).arg(diff).arg(newLimit);
++#endif
++    }
++
++    return newLimit;
++}
++
+diff --git a/core/bandwidthlimiter.h b/core/bandwidthlimiter.h
+new file mode 100644
+index 0000000..9545589
+--- /dev/null
++++ b/core/bandwidthlimiter.h
+@@ -0,0 +1,99 @@
++#ifndef BANDWIDTHLIMITTER_H
++#define BANDWIDTHLIMITTER_H
++
++#include "core/transfer.h"
++
++#include <algorithm>
++#include <cassert>
++#include <numeric>
++#include <vector>
++
++template<typename Entity>
++struct DownloadSpeedTraits {
++    int getLimit(const Entity entity) {
++        return entity->downloadLimit(Transfer::VisibleSpeedLimit);
++    }
++    void setLimit(const Entity entity, const int speed) {
++        entity->setDownloadLimit(speed, Transfer::InvisibleSpeedLimit);
++    }
++    int getCurrent(const Entity entity) {
++        return entity->downloadSpeed() / 1024;
++    }
++};
++
++template<typename Entity>
++struct UploadSpeedTraits {
++    int getLimit(const Entity entity) {
++        return entity->uploadLimit(Transfer::VisibleSpeedLimit);
++    }
++    void setLimit(const Entity entity, const int speed) {
++        entity->setUploadLimit(speed, Transfer::InvisibleSpeedLimit);
++    }
++    int getCurrent(const Entity entity) {
++        return entity->uploadSpeed() / 1024;
++    }
++};
++
++struct SpeedIsLessThan {
++    bool operator()(const int lhs, const int rhs) {
++        // 0 means unlimited
++        if (lhs == 0) {
++            return false;
++        }
++        else {
++            return rhs == 0 || lhs < rhs;
++        }
++    }
++};
++
++int adjustSpeedLimit(std::vector<int> &speeds, const int speedLimit);
++
++template<template<typename> class Traits, typename Entities>
++int
++calculateSpeedLimit(const Entities &entities, const int speedLimit)
++{
++    typedef typename Entities::value_type Entity;
++    Traits<Entity> traits;
++
++    if (speedLimit == 0) return 0;
++
++    const size_t size = std::distance(entities.begin(), entities.end());
++    if (size == 0) return speedLimit;
++
++    // extract entities current speed
++    std::vector<int> speeds;
++    speeds.reserve(size);
++    foreach (const Entity entity, entities) {
++        speeds.push_back(
++            // Use entity limit for calculation if it is less
++            // than current speed. Ununsual but possible situation.
++            std::min(traits.getLimit(entity),
++                     traits.getCurrent(entity), SpeedIsLessThan())
++        );
++    }
++
++    // In case of total current speed is less than the limit
++    const int sum = std::accumulate(speeds.begin(), speeds.end(), 0);
++    if (sum <= speedLimit) return speedLimit;
++
++    // Now, some speed throttling is required.
++    return adjustSpeedLimit(speeds, speedLimit / size);
++}
++
++template<template<typename> class Traits, typename Entities>
++void
++updateSpeedLimit(const Entities &entities, const int speedLimit)
++{
++    typedef typename Entities::value_type Entity;
++    Traits<Entity> traits;
++
++    const int newLimit = calculateSpeedLimit<Traits>(entities, speedLimit);
++
++    foreach (const Entity entity, entities) {
++        const int entityLimit = traits.getLimit(entity);
++        traits.setLimit(entity,
++                        std::min(newLimit, entityLimit, SpeedIsLessThan()));
++    }
++}
++
++#endif // BANDWIDTHLIMITTER_H
+diff --git a/core/transfergroup.cpp b/core/transfergroup.cpp
+index 42c1aa5..20d3c8c 100644
+--- a/core/transfergroup.cpp
++++ b/core/transfergroup.cpp
+@@ -13,6 +13,10 @@
+ 
+ #include "core/transfergrouphandler.h"
+ #include "core/kget.h"
++#include "core/bandwidthlimiter.h"
++
++#include <boost/lambda/casts.hpp>
++#include <boost/range/adaptor/transformed.hpp>
+ 
+ #include <KDebug>
+ #include <KMessageBox>
+@@ -186,7 +190,7 @@ Transfer *TransferGroup::findTransferByDestination(const KUrl &dest)
+     return 0;
+ }
+ 
+-void TransferGroup::setUploadLimit(int ulLimit, Transfer::SpeedLimit limit) 
++void TransferGroup::setUploadLimit(int ulLimit, Transfer::SpeedLimit limit)
+ {
+     if (limit == Transfer::VisibleSpeedLimit) {
+         m_visibleUploadLimit = ulLimit;
+@@ -199,7 +203,7 @@ void TransferGroup::setUploadLimit(int ulLimit, Transfer::SpeedLimit limit)
+     calculateUploadLimit();
+ }
+ 
+-void TransferGroup::setDownloadLimit(int dlLimit, Transfer::SpeedLimit limit) 
++void TransferGroup::setDownloadLimit(int dlLimit, Transfer::SpeedLimit limit)
+ {
+     if (limit == Transfer::VisibleSpeedLimit) {
+         m_visibleDownloadLimit = dlLimit;
+@@ -237,88 +241,36 @@ void TransferGroup::calculateSpeedLimits()
+ 
+ void TransferGroup::calculateDownloadLimit()
+ {
+-    kDebug(5001) << "Calculate new DownloadLimit of " + QString::number(m_downloadLimit);
+-    if (supportsSpeedLimits())
+-    {
+-        const QList<Job*> running = runningJobs();
+-        int n = running.count();
+-        int pool = 0;//We create a pool where we have some KiB/s to go to other transfer's...
+-        QList<Transfer*> transfersNeedSpeed;
+-        foreach (Job *job, running) {
+-            Transfer * transfer = static_cast<Transfer*>(job);
+-            if (transfer)
+-            {
+-                if (m_downloadLimit == 0 && transfer->downloadLimit(Transfer::VisibleSpeedLimit) != 0)
+-                    continue;
+-                else if (m_downloadLimit == 0 && transfer->downloadLimit(Transfer::VisibleSpeedLimit) == 0)
+-                    transfer->setDownloadLimit(0, Transfer::InvisibleSpeedLimit);
+-                else if (transfer->downloadLimit(Transfer::VisibleSpeedLimit) < m_downloadLimit / n 
+-                                            && transfer->downloadLimit(Transfer::VisibleSpeedLimit) != 0)
+-                        /*If the transfer's visible download limit is under the new one, 
+-                                       we move the KiB/s which are different to the pool*/
+-                    pool = pool + (m_downloadLimit / n - transfer->downloadLimit(Transfer::VisibleSpeedLimit));       
+-                else if (transfer->downloadSpeed() + 10 < m_downloadLimit / n)
+-                {
+-                        /*When the downloadSpeed of the transfer is under the new downloadLimit + 10 then we 
+-                            set the downloadLimit to the downloadSpeed + 10*/
+-                    pool = pool + m_downloadLimit / n - transfer->downloadSpeed() + 10;
+-                    transfer->setDownloadLimit(transfer->downloadSpeed() + 10, Transfer::InvisibleSpeedLimit);
+-                }
+-                else
+-                {
+-                    transfer->setDownloadLimit(m_downloadLimit / n, Transfer::InvisibleSpeedLimit);
+-                    transfersNeedSpeed.append(transfer);
+-                }
+-            }
+-        }
+-        foreach (Transfer *transfer, transfersNeedSpeed)
+-        {
+-            transfer->setDownloadLimit(m_downloadLimit / n + pool / transfersNeedSpeed.count(), Transfer::InvisibleSpeedLimit);
+-        }
+-    }
++    kDebug(5001) << "Calculate new DownloadLimit of"
++                 << QString::number(m_downloadLimit);
++    if (!supportsSpeedLimits()) return;
++
++    const QList<Job*> jobs = runningJobs();
++    if (jobs.isEmpty()) return;
++
++    namespace bl = boost::lambda;
++    updateSpeedLimit<DownloadSpeedTraits>(
++        boost::adaptors::transform(
++                    jobs, bl::ll_static_cast<Transfer*>(bl::_1)),
++        m_downloadLimit
++    );
+ }
+ 
+ void TransferGroup::calculateUploadLimit()
+ {
+-    kDebug(5001) << "Calculate new Upload Limit of " + QString::number(m_uploadLimit);
+-    if (supportsSpeedLimits())
+-    {
+-        const QList<Job*> running = runningJobs();
+-        int n = running.count();
+-        int pool = 0;//We create a pool where we have some KiB/s to go to other transfer's...
+-        QList<Transfer*> transfersNeedSpeed;
+-        foreach (Job *job, running) {
+-            Transfer * transfer = static_cast<Transfer*>(job);
+-            if (transfer)
+-            {
+-                if (m_uploadLimit == 0 && transfer->uploadLimit(Transfer::VisibleSpeedLimit) != 0)
+-                    continue;
+-                else if (m_uploadLimit == 0 && transfer->uploadLimit(Transfer::VisibleSpeedLimit) == 0)
+-                    transfer->setUploadLimit(0, Transfer::InvisibleSpeedLimit);
+-                else if (transfer->uploadLimit(Transfer::VisibleSpeedLimit) < m_uploadLimit / n 
+-                                                        && transfer->uploadLimit(Transfer::VisibleSpeedLimit) != 0)
+-                        /*If the transfer's visible upload limit is under the new one, 
+-                                       we move the KiB/s which are different to the pool*/
+-                    pool = pool + (m_uploadLimit / n - transfer->uploadLimit(Transfer::VisibleSpeedLimit));       
+-                else if (transfer->uploadSpeed() + 10 < m_uploadLimit / n)
+-                {
+-                        /*When the uploadSpeed of the transfer is under the new uploadLimit + 10 then we 
+-                            set the uploadLimit to the uploadSpeed + 10*/
+-                    pool = pool + m_uploadLimit / n - transfer->uploadSpeed() + 10;
+-                    transfer->setUploadLimit(transfer->uploadSpeed() + 10, Transfer::InvisibleSpeedLimit);
+-                }
+-                else
+-                {
+-                    transfer->setUploadLimit(m_uploadLimit / n, Transfer::InvisibleSpeedLimit);
+-                    transfersNeedSpeed.append(transfer);
+-                }
+-            }
+-        }
+-        foreach (Transfer *transfer, transfersNeedSpeed)
+-        {
+-            transfer->setUploadLimit(m_uploadLimit / n + pool / transfersNeedSpeed.count(), Transfer::InvisibleSpeedLimit);
+-        }
+-    }
++    kDebug(5001) << "Calculate new UploadLimit of"
++                 << QString::number(m_uploadLimit);
++    if (!supportsSpeedLimits()) return;
++
++    const QList<Job*> jobs = runningJobs();
++    if (jobs.isEmpty()) return;
++
++    namespace bl = boost::lambda;
++    updateSpeedLimit<UploadSpeedTraits>(
++        boost::adaptors::transform(
++                    jobs, bl::ll_static_cast<Transfer*>(bl::_1)),
++        m_downloadLimit
++    );
+ }
+ 
+ void TransferGroup::save(QDomElement e) // krazy:exclude=passbyvalue
+diff --git a/core/transfergroupscheduler.cpp b/core/transfergroupscheduler.cpp
+index 82ceee5..a4eaf61 100644
+--- a/core/transfergroupscheduler.cpp
++++ b/core/transfergroupscheduler.cpp
+@@ -12,6 +12,9 @@
+ #include "kget.h"
+ #include "transfergrouphandler.h"
+ #include "settings.h"
++#include "core/bandwidthlimiter.h"
++
++#include <boost/range/adaptor/filtered.hpp>
+ 
+ TransferGroupScheduler::TransferGroupScheduler(QObject *parent)
+   : Scheduler(parent),
+@@ -30,84 +33,28 @@ void TransferGroupScheduler::calculateSpeedLimits()
+     calculateUploadLimit();
+ }
+ 
++struct TransferGroupIsNotEmpty {
++    bool operator()(TransferGroupHandler * const handler) {
++        return !handler->transfers().isEmpty();
++    }
++};
++
+ void TransferGroupScheduler::calculateDownloadLimit()
+ {
+-    int n = KGet::allTransferGroups().count();
+-    int pool = 0;//We create a pool where we have some KiB/s to go to other groups...
+-    QList<TransferGroupHandler*> transfergroupsNeedSpeed;
+-    foreach (TransferGroupHandler *handler, KGet::allTransferGroups())
+-    {
+-        if (!Settings::speedLimit())
+-            handler->setDownloadLimit(handler->downloadLimit(Transfer::VisibleSpeedLimit), Transfer::InvisibleSpeedLimit);
+-        else if (handler->transfers().count() < 1)
+-        {
+-            pool = pool + downloadLimit() / n;
+-        }
+-        else if (downloadLimit() == 0 && handler->downloadLimit(Transfer::VisibleSpeedLimit) != 0)
+-            continue;
+-        else if (downloadLimit() == 0 && handler->downloadLimit(Transfer::VisibleSpeedLimit) == 0)
+-            handler->setDownloadLimit(0, Transfer::InvisibleSpeedLimit);
+-        else if (handler->downloadLimit(Transfer::VisibleSpeedLimit) < downloadLimit() / n 
+-                                               && handler->downloadLimit(Transfer::VisibleSpeedLimit) != 0)
+-            /*If the handler's visible download limit is under the new one, 
+-                           we move the KiB/s which are different to the pool*/
+-            pool = pool + (downloadLimit() / n - handler->downloadLimit(Transfer::VisibleSpeedLimit));
+-        else if (handler->downloadSpeed() + 10 < downloadLimit() / n)
+-        {
+-            /*When the downloadSpeed of the handler is under the new downloadLimit + 10 then we 
+-                    set the downloadLimit to the downloadSpeed + 10*/
+-            pool = pool + downloadLimit() / n - handler->downloadSpeed() + 10;
+-            handler->setDownloadLimit(handler->downloadSpeed() + 10, Transfer::InvisibleSpeedLimit);
+-        }
+-        else
+-        {
+-            handler->setDownloadLimit(downloadLimit() / n, Transfer::InvisibleSpeedLimit);
+-            transfergroupsNeedSpeed.append(handler);
+-        }
+-    }
+-    foreach (TransferGroupHandler *handler, transfergroupsNeedSpeed)
+-    {
+-        handler->setDownloadLimit(downloadLimit() / n + pool / transfergroupsNeedSpeed.count(), Transfer::InvisibleSpeedLimit);
+-    }
++    updateSpeedLimit<DownloadSpeedTraits>(
++        boost::adaptors::filter(KGet::allTransferGroups(),
++                                TransferGroupIsNotEmpty()),
++        downloadLimit()
++    );
+ }
+ 
+ void TransferGroupScheduler::calculateUploadLimit()
+ {
+-    int n = KGet::allTransferGroups().count();
+-    kDebug(5001) << n;
+-    int pool = 0;//We create a pool where we have some KiB/s to go to other groups...
+-    QList<TransferGroupHandler*> transfergroupsNeedSpeed;
+-    foreach (TransferGroupHandler *handler, KGet::allTransferGroups())
+-    {
+-        if (!Settings::speedLimit())
+-            handler->setUploadLimit(handler->uploadLimit(Transfer::VisibleSpeedLimit), Transfer::InvisibleSpeedLimit);
+-        else if (handler->transfers().count() < 1)
+-            pool = pool + uploadLimit() / n;
+-        else if (uploadLimit() == 0 && handler->uploadLimit(Transfer::VisibleSpeedLimit) != 0)
+-            continue;
+-        else if (uploadLimit() == 0 && handler->uploadLimit(Transfer::VisibleSpeedLimit) == 0)
+-            handler->setUploadLimit(0, Transfer::InvisibleSpeedLimit);
+-        else if (handler->uploadLimit(Transfer::VisibleSpeedLimit) < uploadLimit() / n && handler->uploadLimit(Transfer::VisibleSpeedLimit) != 0)
+-            /*If the handler's visible download limit is under the new one, 
+-                           we move the KiB/s which are different to the pool*/
+-            pool = pool + (uploadLimit() / n - handler->uploadLimit(Transfer::VisibleSpeedLimit));       
+-        else if (handler->uploadSpeed() + 10 < uploadLimit() / n)
+-        {
+-            /*When the downloadSpeed of the handler is under the new downloadLimit + 10 then we 
+-                    set the downloadLimit to the downloadSpeed + 10*/
+-            pool = pool + uploadLimit() / n - handler->uploadSpeed() + 10;
+-            handler->setUploadLimit(handler->uploadSpeed() + 10, Transfer::InvisibleSpeedLimit);
+-        }
+-        else
+-        {
+-            handler->setUploadLimit(uploadLimit() / n, Transfer::InvisibleSpeedLimit);
+-            transfergroupsNeedSpeed.append(handler);
+-        }
+-    }
+-    foreach (TransferGroupHandler *handler, transfergroupsNeedSpeed)
+-    {
+-        handler->setUploadLimit(uploadLimit() / n + pool / transfergroupsNeedSpeed.count(), Transfer::InvisibleSpeedLimit);
+-    }
++    updateSpeedLimit<UploadSpeedTraits>(
++        boost::adaptors::filter(KGet::allTransferGroups(),
++                                TransferGroupIsNotEmpty()),
++        uploadLimit()
++    );
+ }
+ 
+ void TransferGroupScheduler::setDownloadLimit(int limit)
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 5452134..14d3861 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -72,4 +72,18 @@ if(CMAKE_BUILD_TYPE MATCHES debugfull)
+ 
+     target_link_libraries(filedeletertest ${KDE4_KIO_LIBS} ${QT_QTTEST_LIBRARY})
+ 
++    #===========BandwidthLimiter===========
++    set(bandwidthlimitertest_SRCS
++        bandwidthlimitertest.cpp
++	../core/bandwidthlimiter.cpp
++    )
++
++    kde4_add_unit_test(bandwidthlimitertest
++        TESTNAME kget-bandwidthlimitertest
++        ${bandwidthlimitertest_SRCS}
++    )
++
++    target_link_libraries(bandwidthlimitertest 
++	${KDE4_KIO_LIBS} ${QT_QTTEST_LIBRARY})
++
+ endif(CMAKE_BUILD_TYPE MATCHES debugfull)
+diff --git a/tests/bandwidthlimitertest.cpp b/tests/bandwidthlimitertest.cpp
+new file mode 100644
+index 0000000..d2e37ad
+--- /dev/null
++++ b/tests/bandwidthlimitertest.cpp
+@@ -0,0 +1,497 @@
++#include "bandwidthlimitertest.h"
++
++#include "core/bandwidthlimiter.h"
++
++#include <vector>
++
++#include <boost/assign/std/vector.hpp>
++
++#include <QtTest/QtTest>
++
++Q_DECLARE_METATYPE(FakeEntity)
++
++void BandwidthLimiterTest::
++testSpeedTraits()
++{
++    QFETCH(FakeEntity, entity);
++
++    DownloadSpeedTraits<FakeEntity*> dlTraits;
++    QCOMPARE(dlTraits.getCurrent(&entity), entity.downloadSpeed() / 1024);
++    QCOMPARE(dlTraits.getLimit(&entity),
++             entity.downloadLimit(Transfer::VisibleSpeedLimit));
++    dlTraits.setLimit(&entity, 100);
++    QCOMPARE(dlTraits.getLimit(&entity), 100);
++
++    UploadSpeedTraits<FakeEntity*> ulTraits;
++    QCOMPARE(ulTraits.getCurrent(&entity), entity.uploadSpeed() / 1024);
++    QCOMPARE(ulTraits.getLimit(&entity),
++             entity.uploadLimit(Transfer::VisibleSpeedLimit));
++    ulTraits.setLimit(&entity, 100);
++    QCOMPARE(ulTraits.getLimit(&entity), 100);
++}
++
++void BandwidthLimiterTest::
++testSpeedTraits_data()
++{
++    using namespace QTest;
++    addColumn<FakeEntity>("entity");
++
++    FakeEntity entity(100, 200, 300, 400);
++    newRow("simple") << entity;
++}
++
++void BandwidthLimiterTest::
++testSpeedIsLessThan()
++{
++    QFETCH(int, lhs);
++    QFETCH(int, rhs);
++    QFETCH(bool, result);
++
++    SpeedIsLessThan compare;
++    QCOMPARE(compare(lhs, rhs), result);
++}
++
++void BandwidthLimiterTest::
++testSpeedIsLessThan_data()
++{
++    QTest::addColumn<int>("lhs");
++    QTest::addColumn<int>("rhs");
++    QTest::addColumn<bool>("result");
++
++    QTest::newRow("lhs is unlimited") << 0 << 100 << false;
++    QTest::newRow("rhs is unlimited") << 100 << 0 << true;
++    QTest::newRow("both are unlimited") << 0 << 0 << false;
++    QTest::newRow("lhs < rhs") << 100 << 200 << true;
++    QTest::newRow("lhs > rhs") << 200 << 100 << false;
++    QTest::newRow("lhs == rhs") << 100 << 100 << false;
++}
++
++Q_DECLARE_METATYPE(std::vector<FakeEntity*>)
++
++void BandwidthLimiterTest::
++testCalculateSpeedLimit()
++{
++    QFETCH(std::vector<FakeEntity*>, entities);
++    QFETCH(int, limit);
++    QFETCH(int, result);
++
++    QCOMPARE(calculateSpeedLimit<DownloadSpeedTraits>(entities, limit),
++             result);
++
++    foreach(FakeEntity *entity, entities) {
++        delete entity;
++    }
++}
++
++void BandwidthLimiterTest::
++testCalculateSpeedLimit_data()
++{
++    using namespace QTest;
++    addColumn<std::vector<FakeEntity*> >("entities");
++    addColumn<int>("limit");
++    addColumn<int>("result");
++
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(300, 0, 0, 0));
++        entities.push_back(new FakeEntity(200, 0, 0, 0));
++        entities.push_back(new FakeEntity(300, 0, 0, 0));
++        entities.push_back(new FakeEntity(100, 0, 0, 0));
++        newRow("No speed limit")
++            << entities << 0 << 0;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(300, 0, 0, 0));
++        entities.push_back(new FakeEntity(200, 0, 0, 0));
++        entities.push_back(new FakeEntity(300, 0, 0, 0));
++        entities.push_back(new FakeEntity(100, 0, 0, 0));
++        newRow("Total speed is less than the limit")
++            << entities << 1000 << 1000;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(400, 0, 0, 0));
++        entities.push_back(new FakeEntity(200, 0, 0, 0));
++        entities.push_back(new FakeEntity(300, 0, 0, 0));
++        entities.push_back(new FakeEntity(100, 0, 0, 0));
++        newRow("Total speed is as same as the limit")
++            << entities << 1000 << 1000;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(800, 0, 0, 0));
++        entities.push_back(new FakeEntity(600, 0, 0, 0));
++        entities.push_back(new FakeEntity(700, 0, 0, 0));
++        entities.push_back(new FakeEntity(900, 0, 0, 0));
++        newRow("All speed is above the limit")
++            << entities << 2000 << 500;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(200, 0, 0, 0));
++        entities.push_back(new FakeEntity(800, 0, 0, 0));
++        entities.push_back(new FakeEntity(700, 0, 0, 0));
++        entities.push_back(new FakeEntity(600, 0, 0, 0));
++        newRow("Three are above, one is below the limit.")
++            << entities << 2000 << 600;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(500, 0, 0, 0));
++        entities.push_back(new FakeEntity(800, 0, 0, 0));
++        entities.push_back(new FakeEntity(700, 0, 0, 0));
++        entities.push_back(new FakeEntity(600, 0, 0, 0));
++        newRow("Three are above, one is equal to the limit.")
++            << entities << 2000 << 500;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(200, 0, 0, 0));
++        entities.push_back(new FakeEntity(800, 0, 0, 0));
++        entities.push_back(new FakeEntity(700, 0, 0, 0));
++        entities.push_back(new FakeEntity(500, 0, 0, 0));
++        newRow("Two are above, two are less than the limit.")
++            << entities << 2000 << 650;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(500, 0, 0, 0));
++        entities.push_back(new FakeEntity(800, 0, 0, 0));
++        entities.push_back(new FakeEntity(700, 0, 0, 0));
++        entities.push_back(new FakeEntity(500, 0, 0, 0));
++        newRow("Two are above, two are equal to the limit.")
++            << entities << 2000 << 500;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(200, 0, 0, 0));
++        entities.push_back(new FakeEntity(1500, 0, 0, 0));
++        entities.push_back(new FakeEntity(600, 0, 0, 0));
++        entities.push_back(new FakeEntity(400, 0, 0, 0));
++        newRow("Two are above, two are below the limit.")
++            << entities << 2000 << 800;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(200, 0, 0, 0));
++        entities.push_back(new FakeEntity(1500, 0, 0, 0));
++        entities.push_back(new FakeEntity(300, 0, 0, 0));
++        entities.push_back(new FakeEntity(400, 0, 0, 0));
++        newRow("One is above, three are below the limit.")
++            << entities << 2000 << 1100;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(500, 0, 0, 0));
++        entities.push_back(new FakeEntity(1500, 0, 0, 0));
++        entities.push_back(new FakeEntity(500, 0, 0, 0));
++        entities.push_back(new FakeEntity(500, 0, 0, 0));
++        newRow("One is above, three are equal to the limit.")
++            << entities << 2000 << 500;
++    }
++    {
++        std::vector<FakeEntity*> entities;
++        entities.push_back(new FakeEntity(500, 0, 0, 0));
++        entities.push_back(new FakeEntity(1500, 0, 0, 0));
++        entities.push_back(new FakeEntity(500, 0, 0, 0));
++        entities.push_back(new FakeEntity(200, 0, 0, 0));
++        newRow("One is above, One is below, Two are equal to the limit.")
++            << entities << 2000 << 800;
++    }
++}
++
++void BandwidthLimiterTest::
++testUpdateSpeedLimit()
++{
++    QFETCH(std::vector<FakeEntity*>, entities);
++    QFETCH(int, limit);
++    QFETCH(std::vector<int>, results);
++
++    updateSpeedLimit<DownloadSpeedTraits>(entities, limit);
++
++    for (size_t i = 0u, len = entities.size(); i < len; ++i) {
++        FakeEntity *entity = entities[i];
++        const int expected = results[i];
++        const int actual =
++            entity->downloadLimit(Transfer::InvisibleSpeedLimit);
++
++        QCOMPARE(actual, expected);
++
++        delete entity;
++    }
++}
++
++void BandwidthLimiterTest::
++testUpdateSpeedLimit_data()
++{
++    using namespace QTest;
++    addColumn<std::vector<FakeEntity*> >("entities");
++    addColumn<int>("limit");
++    addColumn<std::vector<int> >("results");
++
++    using namespace boost::assign;
++    {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity(300, 0, 0, 0), // 300
++                    new FakeEntity(200, 0, 0, 0), // 200
++                    new FakeEntity(300, 0, 0, 0), // 300
++                    new FakeEntity(100, 0, 0, 0); // 100
++
++        std::vector<int> results;
++        results += 0, 0, 0, 0;
++
++        newRow("No speed limit")
++            << entities << 0 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity(300, 0,   0, 0), // 300
++                    new FakeEntity(200, 0, 500, 0), // 200
++                    new FakeEntity(300, 0,   0, 0), // 300
++                    new FakeEntity(100, 0, 300, 0); // 100
++
++        std::vector<int> results;
++        results += 0, 500, 0, 300;
++
++        newRow("No speed limit, but some entity have its own limit")
++            << entities << 0 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity(300, 0,   0, 0), // 300
++                    new FakeEntity(200, 0, 500, 0), // 200
++                    new FakeEntity(300, 0,   0, 0), // 300
++                    new FakeEntity(100, 0, 300, 0); // 100
++
++        std::vector<int> results;
++        results += 1000, 500, 1000, 300;
++
++        newRow("Total speed is less than the limit, some entities "
++               "have its own limit.")
++            << entities << 1000 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity(400, 0, 600, 0), // 400
++                    new FakeEntity(200, 0,   0, 0), // 200
++                    new FakeEntity(300, 0, 400, 0), // 300
++                    new FakeEntity(100, 0,   0, 0); // 100
++
++        std::vector<int> results;
++        results += 600, 1000, 400, 1000;
++
++        newRow("Total speed is as same as the limit, some "
++               "entities have its own limit.")
++            << entities << 1000 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity(800, 0,   0, 0), // 650
++                    new FakeEntity(600, 0, 500, 0), // 500
++                    new FakeEntity(700, 0,   0, 0), // 650
++                    new FakeEntity(900, 0, 200, 0); // 200
++
++        std::vector<int> results;
++        results += 650, 500, 650, 200;
++
++        newRow("All speed is above the limit. "
++               "Some entities have its own limit.")
++            << entities << 2000 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity(200, 0,   0, 0), // 200
++                    new FakeEntity(800, 0, 400, 0), // 400
++                    new FakeEntity(700, 0,   0, 0), // 700
++                    new FakeEntity(600, 0, 200, 0); // 200
++
++        std::vector<int> results;
++        results += 2000, 400, 2000, 200;
++
++        newRow("Three are above, one is below the limit. "
++               "Some entities have its own limit.")
++            << entities << 2000 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity(500, 0, 600, 0), // 500
++                    new FakeEntity(800, 0,   0, 0), // 650
++                    new FakeEntity(700, 0,   0, 0), // 650
++                    new FakeEntity(600, 0, 200, 0); // 200
++
++        std::vector<int> results;
++        results += 600, 650, 650, 200;
++
++        newRow("Three are above, one is equal to the limit. "
++               "Some entities have its own limit.")
++            << entities << 2000 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity(200, 0, 600, 0), // 200
++                    new FakeEntity(800, 0,   0, 0), // 650
++                    new FakeEntity(700, 0,   0, 0), // 650
++                    new FakeEntity(500, 0, 600, 0); // 500
++
++        std::vector<int> results;
++        results += 600, 650, 650, 600;
++
++        newRow("Two are above, two are less than the limit. "
++               "Some entities have its own limit.")
++            << entities << 2000 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity(500, 0, 600, 0), // 500
++                    new FakeEntity(800, 0,   0, 0), // 500
++                    new FakeEntity(700, 0,   0, 0), // 500
++                    new FakeEntity(500, 0, 600, 0); // 500
++
++        std::vector<int> results;
++        results += 500, 500, 500, 500;
++
++        newRow("Two are above, two are equal to the limit. "
++               "Some entities have its own limit.")
++            << entities << 2000 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity( 200, 0,   0, 0), // 200
++                    new FakeEntity(1500, 0,   0, 0), // 900
++                    new FakeEntity( 600, 0, 500, 0), // 500
++                    new FakeEntity( 400, 0,   0, 0); // 400
++
++        std::vector<int> results;
++        results += 900, 900, 500, 900;
++
++        newRow("Two are above, two are below the limit. "
++               "Some entities have its own limit.")
++            << entities << 2000 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity( 200, 0,   0, 0), // 200
++                    new FakeEntity(1500, 0,   0, 0), // 1100
++                    new FakeEntity( 300, 0, 400, 0), // 300
++                    new FakeEntity( 400, 0,   0, 0); // 400
++
++        std::vector<int> results;
++        results += 1100, 1100, 400, 1100;
++
++        newRow("One is above, three are below the limit. "
++               "Some entities have its own limit.")
++            << entities << 2000 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity( 500, 0, 400, 0), // 400
++                    new FakeEntity(1500, 0,   0, 0), // 600
++                    new FakeEntity( 500, 0,   0, 0), // 500
++                    new FakeEntity( 500, 0,   0, 0); // 500
++
++        std::vector<int> results;
++        results += 400, 600, 600, 600;
++
++        newRow("One is above, three are equal to the limit. "
++               "Some entities have its own limit.")
++            << entities << 2000 << results;
++    } {
++        std::vector<FakeEntity*> entities;
++        entities += new FakeEntity( 500, 0,   0, 0), // 500
++                    new FakeEntity(1500, 0,   0, 0), // 800
++                    new FakeEntity( 500, 0, 600, 0), // 500
++                    new FakeEntity( 200, 0,   0, 0); // 200
++
++        std::vector<int> results;
++        results += 800, 800, 600, 800;
++
++        newRow("One is above, One is below, Two are equal to the limit. "
++               "Some entities have its own limit.")
++            << entities << 2000 << results;
++    }
++}
++
++Q_DECLARE_METATYPE(std::vector<int>)
++
++void BandwidthLimiterTest::
++testAdjustSpeedLimit()
++{
++    QFETCH(std::vector<int>, speeds);
++    QFETCH(int, limit);
++    QFETCH(int, result);
++
++    QCOMPARE(::adjustSpeedLimit(speeds, limit), result);
++}
++
++void BandwidthLimiterTest::
++testAdjustSpeedLimit_data()
++{
++    using namespace QTest;
++    addColumn<std::vector<int> >("speeds");
++    addColumn<int>("limit");
++    addColumn<int>("result");
++
++    {
++        std::vector<int> speeds;
++        speeds.push_back(800);
++        speeds.push_back(600);
++        speeds.push_back(500);
++        speeds.push_back(900);
++        newRow("All speeds are above the limit") << speeds << 500 << 500;
++    }
++    {
++        std::vector<int> speeds;
++        speeds.push_back(200);
++        speeds.push_back(800);
++        speeds.push_back(700);
++        speeds.push_back(600);
++        newRow("Three are above, one is below the limit.")
++                                    << speeds << 500 << 600;
++    }
++    {
++        std::vector<int> speeds;
++        speeds.push_back(500);
++        speeds.push_back(800);
++        speeds.push_back(700);
++        speeds.push_back(600);
++        newRow("Three are above, one is equal to the limit.")
++                                    << speeds << 500 << 500;
++    }
++    {
++        std::vector<int> speeds;
++        speeds.push_back(200);
++        speeds.push_back(800);
++        speeds.push_back(700);
++        speeds.push_back(500);
++        newRow("Two are above, two are less than the limit.")
++                                    << speeds << 500 << 650;
++    }
++    {
++        std::vector<int> speeds;
++        speeds.push_back(500);
++        speeds.push_back(800);
++        speeds.push_back(700);
++        speeds.push_back(500);
++        newRow("Two are above, two are equal to the limit.")
++                                    << speeds << 500 << 500;
++    }
++    {
++        std::vector<int> speeds;
++        speeds.push_back(200);
++        speeds.push_back(1500);
++        speeds.push_back(600);
++        speeds.push_back(400);
++        newRow("Two are above, two are below the limit.")
++                                    << speeds << 500 << 800;
++    }
++    {
++        std::vector<int> speeds;
++        speeds.push_back(200);
++        speeds.push_back(1500);
++        speeds.push_back(300);
++        speeds.push_back(400);
++        newRow("One is above, three are below the limit.")
++                                    << speeds << 500 << 1100;
++    }
++    {
++        std::vector<int> speeds;
++        speeds.push_back(500);
++        speeds.push_back(1500);
++        speeds.push_back(500);
++        speeds.push_back(500);
++        newRow("One is above, three are equal to the limit.")
++                                    << speeds << 500 << 500;
++    }
++}
++
++QTEST_MAIN(BandwidthLimiterTest)
+diff --git a/tests/bandwidthlimitertest.h b/tests/bandwidthlimitertest.h
+new file mode 100644
+index 0000000..3fbffd1
+--- /dev/null
++++ b/tests/bandwidthlimitertest.h
+@@ -0,0 +1,54 @@
++#ifndef BANDWIDTH_LIMITER_TEST_H
++#define BANDWIDTH_LIMITER_TEST_H
++
++#include "core/transfer.h"
++
++#include <QtCore/QObject>
++
++class BandwidthLimiterTest : public QObject
++{
++    Q_OBJECT
++private slots:
++    void testSpeedTraits();
++    void testSpeedTraits_data();
++
++    void testSpeedIsLessThan();
++    void testSpeedIsLessThan_data();
++
++    void testCalculateSpeedLimit();
++    void testCalculateSpeedLimit_data();
++
++    void testAdjustSpeedLimit();
++    void testAdjustSpeedLimit_data();
++
++    void testUpdateSpeedLimit();
++    void testUpdateSpeedLimit_data();
++};
++
++class FakeEntity
++{
++public:
++    FakeEntity() {}
++
++    FakeEntity(int dl, int ul, int dlLimit, int ulLimit)
++        : m_dl(dl * 1024), m_ul(ul * 1024), m_dlLimit(dlLimit), m_ulLimit(ulLimit)
++    {}
++
++    int downloadSpeed() const { return m_dl; }
++    int uploadSpeed() const { return m_ul; }
++
++    int downloadLimit(Transfer::SpeedLimit) const { return m_dlLimit; }
++    int uploadLimit(Transfer::SpeedLimit) const { return m_ulLimit; }
++
++    void setDownloadLimit(int limit, Transfer::SpeedLimit) {
++        m_dlLimit = limit;
++    }
++    void setUploadLimit(int limit, Transfer::SpeedLimit) {
++        m_ulLimit = limit;
++    }
++
++private:
++    int m_dl, m_ul, m_dlLimit, m_ulLimit;
++};
++
++#endif // BANDWIDTH_LIMITER_TEST_H
+-- 
+2.2.2
+
