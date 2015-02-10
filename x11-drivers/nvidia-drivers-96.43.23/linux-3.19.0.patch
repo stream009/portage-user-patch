@@ -1,0 +1,31 @@
+diff --git a/usr/src/nv/nv.c b/usr/src/nv/nv.c
+index dfc45cb..808061c 100644
+--- a/usr/src/nv/nv.c
++++ b/usr/src/nv/nv.c
+@@ -2374,7 +2374,7 @@ unsigned int nv_kern_poll(
+ 
+     nvl = NVL_FROM_FILEP(file);
+ 
+-    if (NV_IS_CONTROL_DEVICE(file->f_dentry->d_inode))
++    if (NV_IS_CONTROL_DEVICE(file->f_path.dentry->d_inode))
+         return nv_kern_ctl_poll(file, wait);
+ 
+     nvfp = NV_GET_NVFP(file);
+@@ -2569,7 +2569,7 @@ long nv_kern_unlocked_ioctl(
+     unsigned long i_arg
+ )
+ {
+-    return nv_kern_ioctl(file->f_dentry->d_inode, file, cmd, i_arg);
++    return nv_kern_ioctl(file->f_path.dentry->d_inode, file, cmd, i_arg);
+ }
+ 
+ long nv_kern_compat_ioctl(
+@@ -2578,7 +2578,7 @@ long nv_kern_compat_ioctl(
+     unsigned long i_arg
+ )
+ {
+-    return nv_kern_ioctl(file->f_dentry->d_inode, file, cmd, i_arg);
++    return nv_kern_ioctl(file->f_path.dentry->d_inode, file, cmd, i_arg);
+ }
+ 
+ /*
