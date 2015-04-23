@@ -1,0 +1,11 @@
+--- a/src/mkvtoolnix-gui/job_widget/mux_job.cpp	2015-04-22 20:15:36.368501909 +0900
++++ b/src/mkvtoolnix-gui/job_widget/mux_job.cpp	2015-04-22 20:16:08.434268711 +0900
+@@ -69,7 +69,7 @@
+   auto line = rawLine;
+ 
+   line.replace(QRegularExpression{"[\r\n]+$"}, "");
+-  std::cout << "processLine: " << to_utf8(line) << std::endl;
++  //std::cout << "processLine: " << to_utf8(line) << std::endl;
+ 
+   // TODO: MuxJob::processLine
+   if (line.startsWith("Warning:")) {
