@@ -1,0 +1,33 @@
+diff --git a/src/widgets/styles/qfusionstyle.cpp b/src/widgets/styles/qfusionstyle.cpp
+index 6d722c6..b6626a8 100644
+--- a/src/widgets/styles/qfusionstyle.cpp
++++ b/src/widgets/styles/qfusionstyle.cpp
+@@ -2597,12 +2597,23 @@ void QFusionStyle::drawComplexControl(ComplexControl control, const QStyleOption
+                 } else {
+                     QRect pixmapRect = scrollBarSlider;
+                     painter->setPen(QPen(alphaOutline));
+-                    if (option->state & State_Sunken && scrollBar->activeSubControls & SC_ScrollBarSlider)
+-                        painter->setBrush(midColor2);
+-                    else if (option->state & State_MouseOver && scrollBar->activeSubControls & SC_ScrollBarSlider)
+-                        painter->setBrush(highlightedGradient);
++
++                    const QColor color = isDarkBg ? option->palette.highlight().color() : buttonColor;
++
++                    if (option->state & State_Sunken && scrollBar->activeSubControls & SC_ScrollBarSlider) {
++                        const QColor midColor = mergedColors(color.light(118), color, 40);
++                        painter->setBrush(midColor);
++                    }
++                    else if (option->state & State_MouseOver && scrollBar->activeSubControls & SC_ScrollBarSlider) {
++                        QLinearGradient sliderGradient = gradient;
++
++                        sliderGradient.setColorAt(0, color.lighter(108));
++                        sliderGradient.setColorAt(1, color);
++
++                        painter->setBrush(sliderGradient);
++                    }
+                     else
+-                        painter->setBrush(gradient);
++                        painter->setBrush(color);
+ 
+                     painter->drawRect(pixmapRect.adjusted(horizontal ? -1 : 0, horizontal ? 0 : -1, horizontal ? 0 : 1, horizontal ? 1 : 0));
+ 
