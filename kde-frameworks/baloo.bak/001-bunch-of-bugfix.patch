@@ -1,0 +1,239 @@
+diff --git a/src/file/eventmonitor.cpp b/src/file/eventmonitor.cpp
+index d245ad7..3e3e0c1 100644
+--- a/src/file/eventmonitor.cpp
++++ b/src/file/eventmonitor.cpp
+@@ -27,12 +27,26 @@
+ #include <QDBusMessage>
+ #include <QDBusPendingCallWatcher>
+ #include <QDBusPendingReply>
++#include <QDBusReply>
+ 
+ // TODO: Make idle timeout configurable?
+ static int s_idleTimeout = 1000 * 60 * 2; // 2 min
+ 
+ using namespace Baloo;
+ 
++bool isOnBattery()
++{
++    QDBusInterface dBusIf {
++        "org.freedesktop.PowerManagement",
++        "/org/freedesktop/PowerManagement",
++        "org.freedesktop.PowerManagement",
++        QDBusConnection::sessionBus()
++    };
++    const QDBusReply<bool> &reply = dBusIf.call("GetOnBattery");
++
++    return reply;
++}
++
+ EventMonitor::EventMonitor(QObject* parent)
+     : QObject(parent)
+ {
+@@ -48,7 +62,7 @@ EventMonitor::EventMonitor(QObject* parent)
+     connect(idleTime, SIGNAL(timeoutReached(int)), this, SLOT(slotIdleTimeoutReached()));
+     connect(idleTime, SIGNAL(resumingFromIdle()), this, SLOT(slotResumeFromIdle()));
+ 
+-    m_isOnBattery = true;
++    m_isOnBattery = isOnBattery();
+     m_isIdle = false;
+     m_enabled = false;
+ 
+diff --git a/src/file/extractor/app.cpp b/src/file/extractor/app.cpp
+index ef70f96..dc6784c 100644
+--- a/src/file/extractor/app.cpp
++++ b/src/file/extractor/app.cpp
+@@ -54,6 +54,9 @@ App::App(QObject* parent)
+ 
+ void App::slotNewInput()
+ {
++    // so that it won't get empty activated signal continuously
++    m_notifyNewData.setEnabled(false);
++
+     Database *db = globalDatabaseInstance();
+     if (!db->open(Database::OpenDatabase)) {
+         qCritical() << "Failed to open the database";
+@@ -103,7 +106,7 @@ void App::slotNewInput()
+ 
+ void App::index(Transaction* tr, const QString& url, quint64 id)
+ {
+-    QString mimetype = m_mimeDb.mimeTypeForFile(url, QMimeDatabase::MatchContent).name();
++    QString mimetype = m_mimeDb.mimeTypeForFile(url).name();
+ 
+     bool shouldIndex = m_config.shouldBeIndexed(url) && m_config.shouldMimeTypeBeIndexed(mimetype);
+     if (!shouldIndex) {
+diff --git a/src/file/extractorprocess.cpp b/src/file/extractorprocess.cpp
+index 67585a6..467d926 100644
+--- a/src/file/extractorprocess.cpp
++++ b/src/file/extractorprocess.cpp
+@@ -42,9 +42,7 @@ ExtractorProcess::ExtractorProcess(QObject* parent)
+ 
+ ExtractorProcess::~ExtractorProcess()
+ {
+-    m_extractorProcess->disconnect(this);
+-    m_extractorProcess->deleteLater();
+-    m_extractorProcess = 0;
++    m_extractorProcess->close();
+ }
+ 
+ void ExtractorProcess::index(const QVector<quint64>& fileIds)
+diff --git a/src/file/fileindexscheduler.cpp b/src/file/fileindexscheduler.cpp
+index dcf45f8..4da60c9 100644
+--- a/src/file/fileindexscheduler.cpp
++++ b/src/file/fileindexscheduler.cpp
+@@ -67,10 +67,12 @@ FileIndexScheduler::FileIndexScheduler(Database* db, FileIndexerConfig* config,
+ void FileIndexScheduler::scheduleIndexing()
+ {
+     if (m_threadPool.activeThreadCount() || m_indexerState == Suspended) {
++        qDebug() << "already running or suspended" << m_threadPool.activeThreadCount() << m_indexerState;
+         return;
+     }
+ 
+     if (m_config->isInitialRun()) {
++        qDebug() << __FUNCTION__ << "first run";
+         auto runnable = new FirstRunIndexer(m_db, m_config, m_config->includeFolders());
+         connect(runnable, &FirstRunIndexer::done, this, &FileIndexScheduler::scheduleIndexing);
+ 
+@@ -81,6 +83,7 @@ void FileIndexScheduler::scheduleIndexing()
+     }
+ 
+     if (!m_newFiles.isEmpty()) {
++        qDebug() << __FUNCTION__ << "new file" << m_newFiles.size();
+         auto runnable = new NewFileIndexer(m_db, m_config, m_newFiles);
+         connect(runnable, &NewFileIndexer::done, this, &FileIndexScheduler::scheduleIndexing);
+ 
+@@ -92,6 +95,7 @@ void FileIndexScheduler::scheduleIndexing()
+     }
+ 
+     if (!m_modifiedFiles.isEmpty()) {
++        qDebug() << __FUNCTION__ << "modifed file" << m_modifiedFiles.size();
+         auto runnable = new ModifiedFileIndexer(m_db, m_config, m_modifiedFiles);
+         connect(runnable, &ModifiedFileIndexer::done, this, &FileIndexScheduler::scheduleIndexing);
+ 
+@@ -103,6 +107,7 @@ void FileIndexScheduler::scheduleIndexing()
+     }
+ 
+     if (!m_xattrFiles.isEmpty()) {
++        qDebug() << __FUNCTION__ << "xattr file" << m_xattrFiles.size();
+         auto runnable = new XAttrIndexer(m_db, m_config, m_xattrFiles);
+         connect(runnable, &XAttrIndexer::done, this, &FileIndexScheduler::scheduleIndexing);
+ 
+@@ -124,6 +129,11 @@ void FileIndexScheduler::scheduleIndexing()
+         Q_EMIT stateChanged(m_indexerState);
+         return;
+     }
++    else {
++        qDebug() << "skipping content indexing\n"
++                    "\tFiles to index:" << m_provider.size() << "\n"
++                 << "\tSystem is on battery: " << m_eventMonitor->isOnBattery();
++    }
+     m_indexerState = Idle;
+     Q_EMIT stateChanged(m_indexerState);
+ }
+@@ -155,7 +165,7 @@ void FileIndexScheduler::handleFileRemoved(const QString& file)
+ 
+ void FileIndexScheduler::powerManagementStatusChanged(bool isOnBattery)
+ {
+-    qDebug() << "Power state changed";
++    qDebug() << "Power state changed" << isOnBattery;
+     if (isOnBattery && m_indexerState == ContentIndexing) {
+         qDebug() << "On battery stopping content indexer";
+         m_contentIndexer->quit();
+diff --git a/src/tools/balooctl/indexer.cpp b/src/tools/balooctl/indexer.cpp
+index d0d16d7..041d6d5 100644
+--- a/src/tools/balooctl/indexer.cpp
++++ b/src/tools/balooctl/indexer.cpp
+@@ -25,6 +25,9 @@
+ #include "database.h"
+ #include "./extractor/result.h"
+ 
++#include <QDBusConnection>
++#include <QDBusMessage>
++
+ #include <KFileMetaData/Extractor>
+ #include <KFileMetaData/PropertyInfo>
+ 
+@@ -38,7 +41,7 @@ Indexer::Indexer(const QString& url, Transaction* tr)
+ 
+ void Indexer::index()
+ {
+-    const QString mimetype = m_mimeDB.mimeTypeForFile(m_url, QMimeDatabase::MatchContent).name();
++    const QString mimetype = m_mimeDB.mimeTypeForFile(m_url, QMimeDatabase::MatchDefault).name();
+     BasicIndexingJob basicIJ(m_url, mimetype, BasicIndexingJob::NoLevel);
+     basicIJ.index();
+     Baloo::Document doc = basicIJ.document();
+@@ -53,9 +56,26 @@ void Indexer::index()
+     }
+ 
+     result.finish();
+-    if (m_tr->hasDocument(doc.id())) {
+-        m_tr->replaceDocument(doc, DocumentTerms | DocumentData);
++    if (m_tr->hasDocument(result.document().id())) {
++        m_tr->replaceDocument(result.document(), DocumentTerms | DocumentData);
+     } else {
+         m_tr->addDocument(result.document());
+     }
+ }
++
++namespace Baloo {
++
++void notifyChangeToFileMonitorClients(const QStringList &paths)
++{
++    auto &&message = QDBusMessage::createSignal(QLatin1String("/files"),
++                                                QLatin1String("org.kde"),
++                                                QLatin1String("changed"));
++    QVariantList arg;
++    arg << paths;
++
++    message.setArguments(arg);
++
++    QDBusConnection::sessionBus().send(message);
++}
++
++} // namespace Baloo
+diff --git a/src/tools/balooctl/indexer.h b/src/tools/balooctl/indexer.h
+index 59b07d0..ccc0118 100644
+--- a/src/tools/balooctl/indexer.h
++++ b/src/tools/balooctl/indexer.h
+@@ -44,6 +44,9 @@ private:
+ 
+     Transaction* m_tr;
+ };
++
++void notifyChangeToFileMonitorClients(const QStringList &paths);
++
+ }
+ 
+ #endif //BALOO_INDEXER_H
+diff --git a/src/tools/balooctl/main.cpp b/src/tools/balooctl/main.cpp
+index 7baae6d..cdc3474 100644
+--- a/src/tools/balooctl/main.cpp
++++ b/src/tools/balooctl/main.cpp
+@@ -267,6 +267,7 @@ int main(int argc, char* argv[])
+ 
+         Transaction tr(db, Transaction::ReadWrite);
+ 
++        QStringList paths;
+         for (int i = 1; i < parser.positionalArguments().size(); ++i) {
+             const QString url = QFileInfo(parser.positionalArguments().at(i)).absoluteFilePath();
+             quint64 id = filePathToId(QFile::encodeName(url));
+@@ -278,15 +279,20 @@ int main(int argc, char* argv[])
+                 out << "Skipping: " << url << " Reason: Already scheduled for indexing\n";
+                 continue;
+             }
++#if 0
+             if (!tr.documentData(id).isEmpty()) {
+                 out << "Skipping: " << url << " Reason: Already indexed\n";
+                 continue;
+             }
++#endif
+             Indexer indexer(url, &tr);
+             out << "Indexing " << url << endl;
+             indexer.index();
++
++            paths << url;
+         }
+         tr.commit();
++        notifyChangeToFileMonitorClients(paths);
+         out << "File(s) indexed\n";
+     }
+ 

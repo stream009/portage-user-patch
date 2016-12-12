@@ -1,0 +1,43 @@
+diff --git a/src/kitemviews/kfileitemmodelrolesupdater.cpp b/src/kitemviews/kfileitemmodelrolesupdater.cpp
+index b03fd9c..b04d2ec 100644
+--- a/src/kitemviews/kfileitemmodelrolesupdater.cpp
++++ b/src/kitemviews/kfileitemmodelrolesupdater.cpp
+@@ -692,13 +692,13 @@ void KFileItemModelRolesUpdater::resolveRecentlyChangedItems()
+     updateChangedItems();
+ }
+ 
+-void KFileItemModelRolesUpdater::applyChangedBalooRoles(const QString& itemUrl)
++void KFileItemModelRolesUpdater::applyChangedBalooRoles(const QString& itemPath)
+ {
+ #ifdef HAVE_BALOO
+-    const KFileItem item = m_model->fileItem(itemUrl);
++    const KFileItem item = m_model->fileItem(QUrl::fromLocalFile(itemPath));
+ 
+     if (item.isNull()) {
+-        // itemUrl is not in the model anymore, probably because
++        // itemPath is not in the model anymore, probably because
+         // the corresponding file has been deleted in the meantime.
+         return;
+     }
+@@ -730,7 +730,7 @@ void KFileItemModelRolesUpdater::applyChangedBalooRoles(const QString& itemUrl)
+             this,    &KFileItemModelRolesUpdater::slotItemsChanged);
+ #else
+ #ifndef Q_CC_MSVC
+-    Q_UNUSED(itemUrl);
++    Q_UNUSED(itemPath);
+ #endif
+ #endif
+ }
+diff --git a/src/kitemviews/private/kbaloorolesprovider.cpp b/src/kitemviews/private/kbaloorolesprovider.cpp
+index 920ce06..0bf90ce 100644
+--- a/src/kitemviews/private/kbaloorolesprovider.cpp
++++ b/src/kitemviews/private/kbaloorolesprovider.cpp
+@@ -178,7 +178,7 @@ QString KBalooRolesProvider::orientationFromValue(int value) const
+ 
+ QString KBalooRolesProvider::durationFromValue(int value) const
+ {
+-    QTime duration;
++    QTime duration(0, 0, 0, 0);
+     duration = duration.addSecs(value);
+     return duration.toString("hh:mm:ss");
+ }

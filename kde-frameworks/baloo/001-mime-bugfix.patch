@@ -1,0 +1,26 @@
+diff --git a/src/file/extractor/app.cpp b/src/file/extractor/app.cpp
+index 2e0872e..541c48e 100644
+--- a/src/file/extractor/app.cpp
++++ b/src/file/extractor/app.cpp
+@@ -125,7 +125,7 @@ void App::processNextFile()
+ 
+ void App::index(Transaction* tr, const QString& url, quint64 id)
+ {
+-    QString mimetype = m_mimeDb.mimeTypeForFile(url, QMimeDatabase::MatchContent).name();
++    QString mimetype = m_mimeDb.mimeTypeForFile(url).name();
+ 
+     bool shouldIndex = m_config.shouldBeIndexed(url) && m_config.shouldMimeTypeBeIndexed(mimetype);
+     if (!shouldIndex) {
+diff --git a/src/tools/balooctl/indexer.cpp b/src/tools/balooctl/indexer.cpp
+index d0d16d7..45e42c1 100644
+--- a/src/tools/balooctl/indexer.cpp
++++ b/src/tools/balooctl/indexer.cpp
+@@ -38,7 +38,7 @@ Indexer::Indexer(const QString& url, Transaction* tr)
+ 
+ void Indexer::index()
+ {
+-    const QString mimetype = m_mimeDB.mimeTypeForFile(m_url, QMimeDatabase::MatchContent).name();
++    const QString mimetype = m_mimeDB.mimeTypeForFile(m_url).name();
+     BasicIndexingJob basicIJ(m_url, mimetype, BasicIndexingJob::NoLevel);
+     basicIJ.index();
+     Baloo::Document doc = basicIJ.document();

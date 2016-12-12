@@ -1,0 +1,42 @@
+diff --git a/src/plugins/platforms/xcb/qxcbkeyboard.cpp b/src/plugins/platforms/xcb/qxcbkeyboard.cpp
+index 85fef39..ee3d646 100644
+--- a/src/plugins/platforms/xcb/qxcbkeyboard.cpp
++++ b/src/plugins/platforms/xcb/qxcbkeyboard.cpp
+@@ -942,11 +942,13 @@ QList<int> QXcbKeyboard::possibleKeys(const QKeyEvent *event) const
+         return QList<int>();
+     }
+     // get kb state from the master xkb_state and update the temporary kb_state
++    xkb_layout_index_t depressedLayout = xkb_state_serialize_layout(xkb_state, XKB_STATE_LAYOUT_DEPRESSED);
++    xkb_layout_index_t latchedLayout = xkb_state_serialize_layout(xkb_state, XKB_STATE_LAYOUT_LATCHED);
+     xkb_layout_index_t lockedLayout = xkb_state_serialize_layout(xkb_state, XKB_STATE_LAYOUT_LOCKED);
+     xkb_mod_mask_t latchedMods = xkb_state_serialize_mods(xkb_state, XKB_STATE_MODS_LATCHED);
+     xkb_mod_mask_t lockedMods = xkb_state_serialize_mods(xkb_state, XKB_STATE_MODS_LOCKED);
+ 
+-    xkb_state_update_mask(kb_state, 0, latchedMods, lockedMods, 0, 0, lockedLayout);
++    xkb_state_update_mask(kb_state, 0, latchedMods, lockedMods, depressedLayout, latchedLayout, lockedLayout);
+ 
+     quint32 keycode = event->nativeScanCode();
+     xkb_keysym_t sym = xkb_state_key_get_one_sym(kb_state, keycode);
+@@ -991,7 +993,7 @@ QList<int> QXcbKeyboard::possibleKeys(const QKeyEvent *event) const
+                     depressed |= (1 << controlMod);
+                 if (neededMods & Qt::MetaModifier)
+                     depressed |= (1 << metaMod);
+-                xkb_state_update_mask(kb_state, depressed, latchedMods, lockedMods, 0, 0, lockedLayout);
++                xkb_state_update_mask(kb_state, depressed, latchedMods, lockedMods, depressedLayout, latchedLayout, lockedLayout);
+                 sym = xkb_state_key_get_one_sym(kb_state, keycode);
+             }
+             if (sym == XKB_KEY_NoSymbol)
+@@ -1448,12 +1450,7 @@ void QXcbKeyboard::handleKeyEvent(xcb_window_t sourceWindow, QEvent::Type type,
+     // used for standard shortcuts in checks like "key == QKeySequence::Copy",
+     // users can still see the actual X11 keysym with QKeyEvent::nativeVirtualKey
+     Qt::KeyboardModifiers modifiers = translateModifiers(state);
+-    xcb_keysym_t translatedSym = XKB_KEY_NoSymbol;
+-    if (modifiers & Qt::ControlModifier && !isLatin(sym))
+-        translatedSym = lookupLatinKeysym(code);
+-    if (translatedSym == XKB_KEY_NoSymbol)
+-        translatedSym = sym;
+-    int qtcode = keysymToQtKey(translatedSym, modifiers, string);
++    int qtcode = keysymToQtKey(sym, modifiers, string);
+ 
+     bool isAutoRepeat = false;
+     if (type == QEvent::KeyPress) {

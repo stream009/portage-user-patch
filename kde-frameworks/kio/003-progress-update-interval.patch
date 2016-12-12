@@ -1,0 +1,40 @@
+diff --git a/src/core/slavebase.cpp b/src/core/slavebase.cpp
+index 4855668..9b95f30 100644
+--- a/src/core/slavebase.cpp
++++ b/src/core/slavebase.cpp
+@@ -42,6 +42,7 @@
+ #include <kconfig.h>
+ #include <kconfiggroup.h>
+ #include <klocalizedstring.h>
++#include <KSharedConfig>
+ 
+ #include "kremoteencoding.h"
+ 
+@@ -84,6 +85,10 @@ public:
+             QStandardPaths::enableTestMode(true);
+         }
+         pendingListEntries.reserve(KIO_MAX_ENTRIES_PER_BATCH);
++
++        KConfigGroup group { KSharedConfig::openConfig(), "General" };
++        // By default, emit progress 10 times a second
++        progressInterval = group.readEntry("Progress report interval", 100);
+     }
+     ~SlaveBasePrivate()
+     {
+@@ -111,6 +116,7 @@ public:
+ 
+     QDateTime lastTimeout;
+     QDateTime nextTimeout;
++    int progressInterval;
+     KIO::filesize_t totalSize;
+     KRemoteEncoding *remotefile;
+     enum { Idle, InsideMethod, FinishedCalled, ErrorCalled } m_state;
+@@ -522,7 +528,7 @@ void SlaveBase::processedSize(KIO::filesize_t _bytes)
+         emitSignal = true;
+     } else {
+         if (d->lastTimeout.isValid()) {
+-            emitSignal = d->lastTimeout.msecsTo(now);    // emit size 10 times a second
++            emitSignal = d->lastTimeout.msecsTo(now) > d->progressInterval;
+         } else {
+             emitSignal = true;
+         }

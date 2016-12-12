@@ -1,0 +1,87 @@
+diff --git a/src/ioslaves/trash/kcmtrash.cpp b/src/ioslaves/trash/kcmtrash.cpp
+index 2132516..feceff0 100644
+--- a/src/ioslaves/trash/kcmtrash.cpp
++++ b/src/ioslaves/trash/kcmtrash.cpp
+@@ -301,6 +301,7 @@ void TrashConfigModule::setupGui()
+     mLimitReachedAction->addItem(i18n("Warn Me"));
+     mLimitReachedAction->addItem(i18n("Delete Oldest Files From Trash"));
+     mLimitReachedAction->addItem(i18n("Delete Biggest Files From Trash"));
++    mLimitReachedAction->addItem(i18n("Delete Earliest Deleted Files From Trash"));
+     mLimitReachedAction->setWhatsThis(xi18nc("@info:whatsthis",
+                                       "<para>When the size limit is reached, it will prefer to delete the type of files that you specify, first. "
+                                       "If this is set to warn you, it will do so instead of automatically deleting files.</para>"));
+diff --git a/src/ioslaves/trash/trashimpl.cpp b/src/ioslaves/trash/trashimpl.cpp
+index 300d320..27768a3 100644
+--- a/src/ioslaves/trash/trashimpl.cpp
++++ b/src/ioslaves/trash/trashimpl.cpp
+@@ -1179,6 +1179,8 @@ bool TrashImpl::adaptTrashSize(const QString &origPath, int trashId)
+                     infoList = dir.entryInfoList(QDir::Files | QDir::AllDirs | QDir::NoDotAndDotDot, QDir::Time | QDir::Reversed);
+                 } else if (actionType == 2) { // delete biggest files first
+                     infoList = dir.entryInfoList(QDir::Files | QDir::AllDirs | QDir::NoDotAndDotDot, QDir::Size);
++                } else if ( actionType == 3 ) { // delete earliest trashed files first
++                    infoList = fileInfoListSortedByDeletionDate(dir, trashId);
+                 } else {
+                     qWarning("Should never happen!");
+                 }
+@@ -1201,4 +1203,38 @@ bool TrashImpl::adaptTrashSize(const QString &origPath, int trashId)
+     return true;
+ }
+ 
++struct TrashedEarlierThan {
++    TrashedEarlierThan(const TrashImpl *impl, const int trashId)
++        : m_impl(impl), m_trashId(trashId) {}
++
++    bool operator()(const QFileInfo &lhs, const QFileInfo &rhs) {
++        TrashImpl *impl = const_cast<TrashImpl*>(m_impl);
++        TrashImpl::TrashedFileInfo lhsInfo, rhsInfo;
++
++        if (!impl->infoForFile(m_trashId, lhs.fileName(), lhsInfo)) {
++            qWarning() << "Fail to get trash info:" << lhs.fileName();
++            return false;
++        }
++        if (!impl->infoForFile(m_trashId, rhs.fileName(), rhsInfo)) {
++            qWarning() << "Fail to get trash info:" << rhs.fileName();
++            return false;
++        }
++
++        return lhsInfo.deletionDate < rhsInfo.deletionDate;
++    }
++
++    const TrashImpl *m_impl;
++    int m_trashId;
++};
++
++QFileInfoList TrashImpl::fileInfoListSortedByDeletionDate(
++                                    const QDir& filesDir, int trashId ) const
++{
++    QFileInfoList result = filesDir.entryInfoList(
++                        QDir::Files | QDir::AllDirs | QDir::NoDotAndDotDot);
++
++    qSort(result.begin(), result.end(), TrashedEarlierThan(this, trashId));
++    return result;
++}
++
+ #include "moc_trashimpl.cpp"
+diff --git a/src/ioslaves/trash/trashimpl.h b/src/ioslaves/trash/trashimpl.h
+index cee9278..fd1a3e9 100644
+--- a/src/ioslaves/trash/trashimpl.h
++++ b/src/ioslaves/trash/trashimpl.h
+@@ -27,6 +27,9 @@
+ #include <QMap>
+ #include <assert.h>
+ 
++#include <QFileInfo>
++class QDir;
++
+ /**
+  * Implementation of all low-level operations done by kio_trash
+  * The structure of the trash directory follows the freedesktop.org standard <TODO URL>
+@@ -158,6 +161,8 @@ private:
+ 
+     void enterLoop();
+ 
++    QFileInfoList fileInfoListSortedByDeletionDate(
++                                    const QDir& filesDir, int trashId ) const;
+ private Q_SLOTS:
+     void jobFinished(KJob *job);
+ 

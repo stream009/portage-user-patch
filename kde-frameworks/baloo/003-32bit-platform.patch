@@ -1,0 +1,259 @@
+diff --git a/src/engine/documentdatadb.cpp b/src/engine/documentdatadb.cpp
+index 9ce7d7d..ef324fd 100644
+--- a/src/engine/documentdatadb.cpp
++++ b/src/engine/documentdatadb.cpp
+@@ -19,6 +19,8 @@
+ 
+ #include "documentdatadb.h"
+ 
++#include <cstdint>
++
+ using namespace Baloo;
+ 
+ DocumentDataDB::DocumentDataDB(MDB_dbi dbi, MDB_txn* txn)
+@@ -36,7 +38,11 @@ DocumentDataDB::~DocumentDataDB()
+ MDB_dbi DocumentDataDB::create(MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, "documentdatadb", MDB_CREATE | MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, "documentdatadb", MDB_CREATE, &dbi);
++#endif
+     Q_ASSERT_X(rc == 0, "DocumentUrlDB::create", mdb_strerror(rc));
+ 
+     return dbi;
+@@ -45,7 +51,11 @@ MDB_dbi DocumentDataDB::create(MDB_txn* txn)
+ MDB_dbi DocumentDataDB::open(MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, "documentdatadb", MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, "documentdatadb", 0, &dbi);
++#endif
+     if (rc == MDB_NOTFOUND) {
+         return 0;
+     }
+diff --git a/src/engine/documentdb.cpp b/src/engine/documentdb.cpp
+index 71c2f62..1093c90 100644
+--- a/src/engine/documentdb.cpp
++++ b/src/engine/documentdb.cpp
+@@ -21,6 +21,8 @@
+ #include "documentdb.h"
+ #include "doctermscodec.h"
+ 
++#include <cstdint>
++
+ #include <QDebug>
+ 
+ using namespace Baloo;
+@@ -40,7 +42,11 @@ DocumentDB::~DocumentDB()
+ MDB_dbi DocumentDB::create(const char* name, MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, name, MDB_CREATE | MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, name, MDB_CREATE, &dbi);
++#endif
+     Q_ASSERT_X(rc == 0, "DocumentDB::create", mdb_strerror(rc));
+ 
+     return dbi;
+@@ -49,7 +55,11 @@ MDB_dbi DocumentDB::create(const char* name, MDB_txn* txn)
+ MDB_dbi DocumentDB::open(const char* name, MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, name, MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, name, 0, &dbi);
++#endif
+     if (rc == MDB_NOTFOUND) {
+         return 0;
+     }
+diff --git a/src/engine/documentiddb.cpp b/src/engine/documentiddb.cpp
+index c2a420d..693c5db 100644
+--- a/src/engine/documentiddb.cpp
++++ b/src/engine/documentiddb.cpp
+@@ -20,6 +20,8 @@
+ 
+ #include "documentiddb.h"
+ 
++#include <cstdint>
++
+ #include <QDebug>
+ 
+ using namespace Baloo;
+@@ -39,7 +41,11 @@ DocumentIdDB::~DocumentIdDB()
+ MDB_dbi DocumentIdDB::create(const char* name, MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, name, MDB_CREATE | MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, name, MDB_CREATE, &dbi);
++#endif
+     Q_ASSERT_X(rc == 0, "DocumentIdDB::create", mdb_strerror(rc));
+ 
+     return dbi;
+@@ -48,7 +54,11 @@ MDB_dbi DocumentIdDB::create(const char* name, MDB_txn* txn)
+ MDB_dbi DocumentIdDB::open(const char* name, MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, name, MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, name, 0, &dbi);
++#endif
+     if (rc == MDB_NOTFOUND) {
+         return 0;
+     }
+diff --git a/src/engine/documenttimedb.cpp b/src/engine/documenttimedb.cpp
+index aa0925a..9775c56 100644
+--- a/src/engine/documenttimedb.cpp
++++ b/src/engine/documenttimedb.cpp
+@@ -20,6 +20,8 @@
+ 
+ #include "documenttimedb.h"
+ 
++#include <cstdint>
++
+ using namespace Baloo;
+ 
+ DocumentTimeDB::DocumentTimeDB(MDB_dbi dbi, MDB_txn* txn)
+@@ -37,7 +39,11 @@ DocumentTimeDB::~DocumentTimeDB()
+ MDB_dbi DocumentTimeDB::create(MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, "documenttimedb", MDB_CREATE | MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, "documenttimedb", MDB_CREATE, &dbi);
++#endif
+     Q_ASSERT_X(rc == 0, "DocumentTimeDB::create", mdb_strerror(rc));
+ 
+     return dbi;
+@@ -46,7 +52,11 @@ MDB_dbi DocumentTimeDB::create(MDB_txn* txn)
+ MDB_dbi DocumentTimeDB::open(MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, "documenttimedb", MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, "documenttimedb", 0, &dbi);
++#endif
+     if (rc == MDB_NOTFOUND) {
+         return 0;
+     }
+diff --git a/src/engine/idfilenamedb.cpp b/src/engine/idfilenamedb.cpp
+index 4e2f8b7..ee33251 100644
+--- a/src/engine/idfilenamedb.cpp
++++ b/src/engine/idfilenamedb.cpp
+@@ -20,6 +20,8 @@
+ 
+ #include "idfilenamedb.h"
+ 
++#include <cstdint>
++
+ using namespace Baloo;
+ 
+ IdFilenameDB::IdFilenameDB(MDB_dbi dbi, MDB_txn* txn)
+@@ -37,7 +39,11 @@ IdFilenameDB::~IdFilenameDB()
+ MDB_dbi IdFilenameDB::create(MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, "idfilename", MDB_CREATE | MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, "idfilename", MDB_CREATE, &dbi);
++#endif
+     Q_ASSERT_X(rc == 0, "IdFilenameDB::create", mdb_strerror(rc));
+ 
+     return dbi;
+@@ -46,7 +52,11 @@ MDB_dbi IdFilenameDB::create(MDB_txn* txn)
+ MDB_dbi IdFilenameDB::open(MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, "idfilename", MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, "idfilename", 0, &dbi);
++#endif
+     if (rc == MDB_NOTFOUND) {
+         return 0;
+     }
+diff --git a/src/engine/idtreedb.cpp b/src/engine/idtreedb.cpp
+index a0228f7..ddc3efb 100644
+--- a/src/engine/idtreedb.cpp
++++ b/src/engine/idtreedb.cpp
+@@ -21,6 +21,8 @@
+ #include "idtreedb.h"
+ #include "postingiterator.h"
+ 
++#include <cstdint>
++
+ #include <QDebug>
+ #include <algorithm>
+ 
+@@ -37,7 +39,11 @@ IdTreeDB::IdTreeDB(MDB_dbi dbi, MDB_txn* txn)
+ MDB_dbi IdTreeDB::create(MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, "idtree", MDB_CREATE | MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, "idtree", MDB_CREATE, &dbi);
++#endif
+     Q_ASSERT_X(rc == 0, "IdTreeDB::create", mdb_strerror(rc));
+ 
+     return dbi;
+@@ -46,7 +52,11 @@ MDB_dbi IdTreeDB::create(MDB_txn* txn)
+ MDB_dbi IdTreeDB::open(MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, "idtree", MDB_INTEGERKEY, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, "idtree", 0, &dbi);
++#endif
+     if (rc == MDB_NOTFOUND) {
+         return 0;
+     }
+diff --git a/src/engine/mtimedb.cpp b/src/engine/mtimedb.cpp
+index f7283b5..18d4bcc 100644
+--- a/src/engine/mtimedb.cpp
++++ b/src/engine/mtimedb.cpp
+@@ -21,6 +21,8 @@
+ #include "mtimedb.h"
+ #include "vectorpostingiterator.h"
+ 
++#include <cstdint>
++
+ using namespace Baloo;
+ 
+ MTimeDB::MTimeDB(MDB_dbi dbi, MDB_txn* txn)
+@@ -38,7 +40,11 @@ MTimeDB::~MTimeDB()
+ MDB_dbi MTimeDB::create(MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, "mtimedb", MDB_CREATE | MDB_INTEGERKEY | MDB_DUPSORT | MDB_DUPFIXED | MDB_INTEGERDUP, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, "mtimedb", MDB_CREATE | MDB_DUPSORT | MDB_DUPFIXED, &dbi);
++#endif
+     Q_ASSERT_X(rc == 0, "MTimeDB::create", mdb_strerror(rc));
+ 
+     return dbi;
+@@ -47,7 +53,11 @@ MDB_dbi MTimeDB::create(MDB_txn* txn)
+ MDB_dbi MTimeDB::open(MDB_txn* txn)
+ {
+     MDB_dbi dbi;
++#if SIZE_MAX == UINT64_MAX
+     int rc = mdb_dbi_open(txn, "mtimedb", MDB_INTEGERKEY | MDB_DUPSORT | MDB_DUPFIXED | MDB_INTEGERDUP, &dbi);
++#else
++    int rc = mdb_dbi_open(txn, "mtimedb", MDB_DUPSORT | MDB_DUPFIXED, &dbi);
++#endif
+     if (rc == MDB_NOTFOUND) {
+         return 0;
+     }

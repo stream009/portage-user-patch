@@ -1,0 +1,28 @@
+diff --git a/src/widgets/kpropertiesdialog.cpp b/src/widgets/kpropertiesdialog.cpp
+index 0ff5062..ac11e68 100644
+--- a/src/widgets/kpropertiesdialog.cpp
++++ b/src/widgets/kpropertiesdialog.cpp
+@@ -115,6 +115,7 @@ extern "C" {
+ #include <kfileitemlistproperties.h>
+ #include <kwindowconfig.h>
+ #include <kioglobal_p.h>
++#include <KServiceTypeTrader>
+ 
+ #include "ui_kpropertiesdesktopbase.h"
+ #include "ui_kpropertiesdesktopadvbase.h"
+@@ -604,9 +605,13 @@ void KPropertiesDialog::KPropertiesDialogPrivate::insertPages()
+                         " ([X-KDE-Protocol] == '%1'  )   )"
+                     ).arg(item.url().scheme());
+ 
+-    // qDebug() << "trader query: " << query;
+-    const KService::List offers = KMimeTypeTrader::self()->query(mimetype, QStringLiteral("KPropertiesDialog/Plugin"), query);
++    const auto &offers =
++        KServiceTypeTrader::self()->query("KPropertiesDialog/Plugin", query);
+     foreach (const KService::Ptr &ptr, offers) {
++        const auto &mimeTypes = ptr->mimeTypes();
++        if (!mimeTypes.isEmpty() && !mimeTypes.contains(mimetype)) {
++            continue;
++        }
+         KPropertiesDialogPlugin *plugin = ptr->createInstance<KPropertiesDialogPlugin>(q);
+         if (!plugin) {
+             continue;

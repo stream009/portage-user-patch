@@ -1,0 +1,203 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 498e7c5..eab6e97 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -248,6 +248,7 @@ set(dolphin_SRCS
+     dolphindebug.cpp
+     dbusinterface.cpp
+     global.cpp
++    dolphinplacesmodel.cpp
+ )
+ 
+ kconfig_add_kcfg_files(dolphin_SRCS GENERATE_MOC
+diff --git a/src/dolphinmainwindow.cpp b/src/dolphinmainwindow.cpp
+index f7a7613..e00ec6b 100644
+--- a/src/dolphinmainwindow.cpp
++++ b/src/dolphinmainwindow.cpp
+@@ -28,6 +28,7 @@
+ #include "dolphintabwidget.h"
+ #include "dolphinviewcontainer.h"
+ #include "dolphintabpage.h"
++#include "dolphinplacesmodel.h"
+ #include "panels/folders/folderspanel.h"
+ #include "panels/places/placespanel.h"
+ #include "panels/information/informationpanel.h"
+@@ -957,12 +958,19 @@ void DolphinMainWindow::setUrlAsCaption(const QUrl& url)
+         }
+     }
+ 
+-    QString fileName = url.adjusted(QUrl::StripTrailingSlash).fileName();
+-    if (fileName.isEmpty()) {
+-        fileName = '/';
+-    }
++    const auto &placesModel = DolphinPlacesModel::instance();
++    const auto &placeName = placesModel.text(url);
+ 
+-    caption.append(fileName);
++    if (!placeName.isEmpty()) {
++        caption.append(placeName);
++    }
++    else {
++        QString fileName = url.adjusted(QUrl::StripTrailingSlash).fileName();
++        if (fileName.isEmpty()) {
++            fileName = '/';
++        }
++        caption.append(fileName);
++    }
+ 
+     setWindowTitle(caption);
+ }
+diff --git a/src/dolphinplacesmodel.cpp b/src/dolphinplacesmodel.cpp
+new file mode 100644
+index 0000000..1c9c50d
+--- /dev/null
++++ b/src/dolphinplacesmodel.cpp
+@@ -0,0 +1,46 @@
++/***************************************************************************
++ * Copyright (C) 2015 by stream <stream009@gmail.com>                      *
++ *                                                                         *
++ *   This program is free software; you can redistribute it and/or modify  *
++ *   it under the terms of the GNU General Public License as published by  *
++ *   the Free Software Foundation; either version 2 of the License, or     *
++ *   (at your option) any later version.                                   *
++ *                                                                         *
++ *   This program is distributed in the hope that it will be useful,       *
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
++ *   GNU General Public License for more details.                          *
++ *                                                                         *
++ *   You should have received a copy of the GNU General Public License     *
++ *   along with this program; if not, write to the                         *
++ *   Free Software Foundation, Inc.,                                       *
++ *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA            *
++ ***************************************************************************/
++#include "dolphinplacesmodel.h"
++
++#include <QModelIndex>
++#include <QString>
++#include <QUrl>
++
++DolphinPlacesModel &DolphinPlacesModel::
++instance()
++{
++    static DolphinPlacesModel theObject;
++
++    return theObject;
++}
++
++QString DolphinPlacesModel::
++text(const QUrl &url) const
++{
++    for (auto i = 0, cnt = this->rowCount(); i < cnt; ++i) {
++        const auto &idx = this->index(i, 0);
++        const auto &placeUrl = this->url(idx);
++
++        if (placeUrl.matches(url, QUrl::StripTrailingSlash)) {
++            return this->text(idx);
++        }
++    }
++
++    return {};
++}
+diff --git a/src/dolphinplacesmodel.h b/src/dolphinplacesmodel.h
+new file mode 100644
+index 0000000..1cc797c
+--- /dev/null
++++ b/src/dolphinplacesmodel.h
+@@ -0,0 +1,52 @@
++/***************************************************************************
++ * Copyright (C) 2015 by stream <stream009@gmail.com>                      *
++ *                                                                         *
++ *   This program is free software; you can redistribute it and/or modify  *
++ *   it under the terms of the GNU General Public License as published by  *
++ *   the Free Software Foundation; either version 2 of the License, or     *
++ *   (at your option) any later version.                                   *
++ *                                                                         *
++ *   This program is distributed in the hope that it will be useful,       *
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
++ *   GNU General Public License for more details.                          *
++ *                                                                         *
++ *   You should have received a copy of the GNU General Public License     *
++ *   along with this program; if not, write to the                         *
++ *   Free Software Foundation, Inc.,                                       *
++ *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA            *
++ ***************************************************************************/
++#ifndef DOLPHIN_PLACES_MODEL_H
++#define DOLPHIN_PLACES_MODEL_H
++
++#include <KFilePlacesModel>
++
++class QString;
++class QUrl;
++
++/*
++ * Extension of KFilePlacesModel
++ * - Add function that return place text for URL.
++ * - Singleton
++ *
++ * TODO - We should merge this with PlacesItemModel.
++ * TODO - Singleton stinks. I choose singleton only because it is convenient
++ *        for patch, since it minimizes changes to existing code.
++ */
++class DolphinPlacesModel : public KFilePlacesModel
++{
++public:
++    static DolphinPlacesModel &instance();
++
++    using KFilePlacesModel::text;
++    /*
++     * Place text for given URL
++     * If the URL isn't there in places, empty string will be returned.
++     */
++    QString text(const QUrl&) const;
++
++private:
++    DolphinPlacesModel() = default;
++};
++
++#endif // DOLPHIN_PLACES_MODEL_H
+diff --git a/src/dolphintabwidget.cpp b/src/dolphintabwidget.cpp
+index ca626d4..69a6afb 100644
+--- a/src/dolphintabwidget.cpp
++++ b/src/dolphintabwidget.cpp
+@@ -22,6 +22,7 @@
+ #include "dolphintabbar.h"
+ #include "dolphintabpage.h"
+ #include "dolphinviewcontainer.h"
++#include "dolphinplacesmodel.h"
+ 
+ #include <QApplication>
+ #include <KConfigGroup>
+@@ -242,7 +243,18 @@ void DolphinTabWidget::slotPlacesPanelVisibilityChanged(bool visible)
+     for (int i = 0; i < tabCount; ++i) {
+         DolphinTabPage* tabPage = tabPageAt(i);
+         tabPage->setPlacesSelectorVisible(m_placesSelectorVisible);
++
++        // Get URL of the active view of the tab page
++        // TODO Factor out to DelphinTabPage
++        const auto* const activeView = tabPage->activeViewContainer();
++        Q_ASSERT(activeView);
++
++        const auto &url = activeView->url();
++        Q_ASSERT(url.isValid());
++
++        this->setTabText(i, tabName(url));
+     }
++
+ }
+ 
+ void DolphinTabWidget::restoreClosedTab(const QByteArray& state)
+@@ -333,6 +345,12 @@ void DolphinTabWidget::tabRemoved(int index)
+ 
+ QString DolphinTabWidget::tabName(const QUrl& url) const
+ {
++    const auto &placesModel = DolphinPlacesModel::instance();
++    const QString placeName = placesModel.text(url);
++    if (!placeName.isEmpty()) {
++        return placeName;
++    }
++
+     QString name;
+     if (url == QUrl("file:///")) {
+         name = '/';
